@@ -19,7 +19,7 @@ def apply_hu_windowing(image, lower=-400, upper=400):
     return result
 
 
-def resample_to_isotropic(image, target_spacing=(1.0, 1.0, 1.0)):
+def resample_to_isotropic(image, target_spacing=(1.0, 1.0, 1.0), is_label=False):
     original_spacing = image.GetSpacing()
     original_size = image.GetSize()
     new_size = [
@@ -33,26 +33,35 @@ def resample_to_isotropic(image, target_spacing=(1.0, 1.0, 1.0)):
     resampler.SetOutputOrigin(image.GetOrigin())
     resampler.SetTransform(sitk.Transform())
     resampler.SetDefaultPixelValue(image.GetPixelIDValue())
-    resampler.SetInterpolator(sitk.sitkBSpline)
+    if is_label:
+        resampler.SetInterpolator(sitk.sitkNearestNeighbor)
+    else:
+        resampler.SetInterpolator(sitk.sitkBSpline)
     return resampler.Execute(image)
 
 
 def extract_roi(image, segmentation, padding=10):
     seg_arr = sitk.GetArrayFromImage(segmentation)
+    img_arr = sitk.GetArrayFromImage(image)
     coords = np.argwhere(seg_arr > 0)
     if len(coords) == 0:
         return image
+
     min_c = coords.min(axis=0)
     max_c = coords.max(axis=0)
-    img_size = np.array(image.GetSize())
+
+    img_shape = np.array(img_arr.shape)
     min_c = np.maximum(min_c - padding, 0)
-    max_c = np.minimum(max_c + padding, img_size)
-    extractor = sitk.ExtractImageFilter()
-    sz = [int(max_c[2] - min_c[2]), int(max_c[1] - min_c[1]), int(max_c[0] - min_c[0])]
-    idx = [int(min_c[2]), int(min_c[1]), int(min_c[0])]
-    extractor.SetSize(sz)
-    extractor.SetIndex(idx)
-    return extractor.Execute(image)
+    max_c = np.minimum(max_c + padding, img_shape)
+
+    # Crop to valid range
+    for i in range(3):
+        if max_c[i] <= min_c[i]:
+            max_c[i] = min(min_c[i] + 1, img_shape[i])
+
+    cropped = img_arr[min_c[0]:max_c[0], min_c[1]:max_c[1], min_c[2]:max_c[2]]
+    result = sitk.GetImageFromArray(cropped)
+    return result
 
 
 def crop_or_pad(image, target_size=(128, 128, 128)):
@@ -85,10 +94,10 @@ def preprocess_ct_volume(imaging_path, segmentation_path=None,
                          target_spacing=(1.0, 1.0, 1.0), use_segmentation=True):
     image = load_nifti(imaging_path)
     image = apply_hu_windowing(image, hu_lower, hu_upper)
-    image = resample_to_isotropic(image, target_spacing)
+    image = resample_to_isotropic(image, target_spacing, is_label=False)
     if use_segmentation and segmentation_path and os.path.exists(segmentation_path):
         seg = load_nifti(segmentation_path)
-        seg = resample_to_isotropic(seg, target_spacing)
+        seg = resample_to_isotropic(seg, target_spacing, is_label=True)
         image = extract_roi(image, seg)
     image = crop_or_pad(image, target_size)
     image = normalize_zscore(image)
