@@ -20,7 +20,7 @@ Authoritative plan: `tasks/plan.md` (integrates `references/plan.md`)
 - [x] Step 3: PyRadiomics extraction + top-16 F-value selection (train-only)
 - [x] Step 4: Synthetic clinical fields (Table 1 prevalences, label-independent)
 - [x] Step 5: Exclusion criteria + stratified split → `splits.json` + seed
-- [ ] Step 6: Sector-dict Dataset/DataLoader + paper augmentations
+- [x] Step 6: Sector-dict Dataset/DataLoader + paper augmentations (commit `190b20f`)
 - [ ] **Checkpoint:** pipeline runs end-to-end on pilot subset
 
 ## M2: vViT Sanity Check (Step 7)

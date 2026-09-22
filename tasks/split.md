@@ -18,7 +18,7 @@ Divides `todo.md` / `tasks/plan.md` between 2 teammates. Shared milestones stay 
 - [x] Step 3: PyRadiomics extraction + train-only top-16 F-value selection
 - [x] Step 4: Synthetic clinical fields (Table 1 prevalences, label-independent, `synthetic=True` flag)
 - [x] Step 5: Exclusion criteria + stratified split → `splits.json` + seed
-- [ ] Step 6: Sector-dict Dataset/DataLoader + paper augmentations
+- [x] Step 6: Sector-dict Dataset/DataLoader + paper augmentations (commit `190b20f`)
 - [ ] **M1 checkpoint:** pipeline runs end-to-end on pilot subset → hand off to B
 
 ### M5: Explainability (after M3 model exists)

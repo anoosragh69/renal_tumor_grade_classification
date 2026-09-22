@@ -134,7 +134,7 @@ Reproduce the paper's Fig. 2 pipeline programmatically:
 
 **Deliverable:** `data/processed/splits.json` with patient IDs per split + logged seed
 
-### Step 6 — Dataset / DataLoader [REWRITE]
+### Step 6 — Dataset / DataLoader [REWRITE] ✅
 Sector-dict sample:
 ```python
 {
@@ -147,6 +147,8 @@ Sector-dict sample:
 }
 ```
 Augmentations (train split, **image sector only**): horizontal flip, vertical flip, perspective, invert, posterize, solarize, equalize (via `torchvision.transforms`)
+
+**Status:** ✅ complete (commit `190b20f`) — `src/data/dataset.py` rewritten as `RenalTumorSectorDataset` + `get_dataloaders()`; self-test verifies schema, train-only augmentation, val/test determinism, label consistency, split disjointness. Sample also carries `patient_id`/`slice_idx` metadata for patient-level aggregation (Step 9) and permutation importance (Step 10).
 
 ### Step 7 — vViT model (Fig. 3) [NEW — core of project]
 1. **Sector tokenizers:** linear projection per sector into shared embedding dim
