@@ -194,7 +194,7 @@ Structure mirroring the paper: Intro → Methods (data, model, stats) → Result
 | # | Checkpoint | Status |
 |---|---|---|
 | M0 | Data downloaded + exploration + literature review | ✅ done |
-| M1 | Pipeline end-to-end on ~20-patient pilot (crop → radiomics → synthetic → split) | pending |
+| M1 | Pipeline end-to-end on ~20-patient pilot (crop → radiomics → synthetic → split) | ✅ done (2026-09-22, 40-case mock pilot → 8/2/3 split; real-data re-run pending path) |
 | M2 | vViT overfits a tiny subset (architecture + loss sanity check) | pending |
 | M3 | Full training run; paper-style metrics table reproduced | pending |
 | M4 | Baselines (ViT/ConvNeXt/ResNeXt) trained; DeLong/McNemar table | pending |

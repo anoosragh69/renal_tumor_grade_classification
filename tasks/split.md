@@ -13,13 +13,13 @@ Divides `todo.md` / `tasks/plan.md` between 2 teammates. Shared milestones stay 
 - [x] Step 1: Audit WHO/ISUP grade availability (commit `833b0d4`) — 172 usable labels, see `docs/isup_grade_audit.md`
 
 ### M1: Pilot Data Pipeline (~20-patient subset)
-> ⚠️ **Dataset pending:** Real KiTS19 path not yet provided. Steps 2–6 implemented and tested on mock data. Re-run once path is confirmed.
+> ⚠️ **Dataset pending:** Real KiTS19 path not yet provided. Steps 2–6 validated end-to-end on a **40-case seeded mock pilot** (`scratch/generate_pilot_data.py`, seed 42): all exclusion paths exercised (4 null-grade, 22 slice-count outliers), equalise + stratified split → 8/2/3. Re-run once real path is confirmed.
 - [x] Step 2: Segmentation-guided 2D cropping (Fig. 1, 128×128 LANCZOS)
 - [x] Step 3: PyRadiomics extraction + train-only top-16 F-value selection
 - [x] Step 4: Synthetic clinical fields (Table 1 prevalences, label-independent, `synthetic=True` flag)
 - [x] Step 5: Exclusion criteria + stratified split → `splits.json` + seed
 - [x] Step 6: Sector-dict Dataset/DataLoader + paper augmentations (commit `190b20f`)
-- [ ] **M1 checkpoint:** pipeline runs end-to-end on pilot subset → hand off to B
+- [x] **M1 checkpoint:** pipeline runs end-to-end on pilot subset → hand off to B ✅ (2026-09-22) — artifact: `splits.json` (train 8 / val 2 / test 3) + `get_dataloaders()` in `src/data/dataset.py`; handoff-check passed (all 3 loaders batch, `SECTOR_DIMS` exported)
 
 ### M5: Explainability (after M3 model exists)
 - [ ] Step 10a: Permutation feature importance (100× per sector)

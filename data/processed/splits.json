@@ -1,0 +1,82 @@
+{
+  "seed": 42,
+  "train": [
+    "case_00001",
+    "case_00005",
+    "case_00007",
+    "case_00014",
+    "case_00023",
+    "case_00034",
+    "case_00035",
+    "case_00039"
+  ],
+  "val": [
+    "case_00012",
+    "case_00033"
+  ],
+  "test": [
+    "case_00016",
+    "case_00022",
+    "case_00038"
+  ],
+  "counts": {
+    "train": 8,
+    "val": 2,
+    "test": 3,
+    "total": 13
+  },
+  "label_distribution": {
+    "train": {
+      "low": 4,
+      "high": 4
+    },
+    "val": {
+      "low": 1,
+      "high": 1
+    },
+    "test": {
+      "low": 1,
+      "high": 2
+    }
+  },
+  "excluded": {
+    "no_isup_grade": 4,
+    "radiomics_failure": 0,
+    "no_valid_slices": 0,
+    "slice_count_outlier": 22
+  },
+  "excluded_ids": {
+    "no_isup_grade": [
+      "case_00003",
+      "case_00017",
+      "case_00028",
+      "case_00036"
+    ],
+    "radiomics_failure": [],
+    "no_valid_slices": [],
+    "slice_count_outlier": [
+      "case_00000",
+      "case_00002",
+      "case_00006",
+      "case_00008",
+      "case_00009",
+      "case_00010",
+      "case_00011",
+      "case_00013",
+      "case_00015",
+      "case_00018",
+      "case_00019",
+      "case_00020",
+      "case_00021",
+      "case_00024",
+      "case_00025",
+      "case_00026",
+      "case_00027",
+      "case_00029",
+      "case_00030",
+      "case_00031",
+      "case_00032",
+      "case_00037"
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+[
+  "original_glcm_Idm",
+  "original_glrlm_GrayLevelNonUniformityNormalized",
+  "original_glcm_DifferenceAverage",
+  "original_glszm_LargeAreaLowGrayLevelEmphasis",
+  "original_firstorder_Mean",
+  "original_ngtdm_Complexity",
+  "original_firstorder_RootMeanSquared",
+  "original_firstorder_Skewness",
+  "original_glszm_ZoneEntropy",
+  "original_glcm_DifferenceEntropy",
+  "original_glrlm_RunPercentage",
+  "original_glcm_Contrast",
+  "original_glrlm_RunEntropy",
+  "original_ngtdm_Busyness",
+  "original_gldm_GrayLevelNonUniformity",
+  "original_glcm_InverseVariance"
+]
