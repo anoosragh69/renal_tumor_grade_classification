@@ -13,8 +13,9 @@ Divides `todo.md` / `tasks/plan.md` between 2 teammates. Shared milestones stay 
 - [x] Step 1: Audit WHO/ISUP grade availability (commit `833b0d4`) — 172 usable labels, see `docs/isup_grade_audit.md`
 
 ### M1: Pilot Data Pipeline (~20-patient subset)
+> ⚠️ **Dataset pending:** Real KiTS19 path not yet provided. Steps 2–6 implemented and tested on mock data. Re-run once path is confirmed.
 - [x] Step 2: Segmentation-guided 2D cropping (Fig. 1, 128×128 LANCZOS)
-- [ ] Step 3: PyRadiomics extraction + train-only top-16 F-value selection
+- [x] Step 3: PyRadiomics extraction + train-only top-16 F-value selection
 - [ ] Step 4: Synthetic clinical fields (Table 1 prevalences, label-independent, `synthetic=True` flag)
 - [ ] Step 5: Exclusion criteria + stratified split → `splits.json` + seed
 - [ ] Step 6: Sector-dict Dataset/DataLoader + paper augmentations

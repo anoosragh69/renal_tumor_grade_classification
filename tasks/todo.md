@@ -14,8 +14,10 @@ Authoritative plan: `tasks/plan.md` (integrates `references/plan.md`)
 
 ## M1: Pilot Data Pipeline (Steps 2–6, ~20-patient subset)
 
+> ⚠️ **Dataset pending:** Real KiTS19 path not yet provided. All Steps 2–6 are implemented and tested on mock data. Re-run each script against real `kits19/data/` once path is confirmed.
+
 - [x] Step 2: Segmentation-guided 2D cropping (Fig. 1, 128×128 LANCZOS)
-- [ ] Step 3: PyRadiomics extraction + top-16 F-value selection (train-only)
+- [x] Step 3: PyRadiomics extraction + top-16 F-value selection (train-only)
 - [ ] Step 4: Synthetic clinical fields (Table 1 prevalences, label-independent)
 - [ ] Step 5: Exclusion criteria + stratified split → `splits.json` + seed
 - [ ] Step 6: Sector-dict Dataset/DataLoader + paper augmentations
@@ -66,4 +68,5 @@ Authoritative plan: `tasks/plan.md` (integrates `references/plan.md`)
 ## Notes
 - **Superseded work:** old Tasks 6–15 (3D CNN / early-fusion pipeline) are replaced by the integrated plan — see mapping table in `tasks/plan.md` §8.
 - **Reusable code:** SimpleITK I/O, kits.json loading, metrics, trainer/baseline skeletons — disposition table in `tasks/plan.md` §1.
-- **Current status:** M0 complete; starting M1.
+- **Current status:** M0 complete; M1 in progress (Steps 2–6 implemented on mock data, pending real dataset).
+- **Dataset pending:** User will provide real `kits19/data/` path — re-run Steps 2–6 for full validation.
