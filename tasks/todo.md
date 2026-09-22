@@ -18,7 +18,7 @@ Authoritative plan: `tasks/plan.md` (integrates `references/plan.md`)
 
 - [x] Step 2: Segmentation-guided 2D cropping (Fig. 1, 128×128 LANCZOS)
 - [x] Step 3: PyRadiomics extraction + top-16 F-value selection (train-only)
-- [ ] Step 4: Synthetic clinical fields (Table 1 prevalences, label-independent)
+- [x] Step 4: Synthetic clinical fields (Table 1 prevalences, label-independent)
 - [ ] Step 5: Exclusion criteria + stratified split → `splits.json` + seed
 - [ ] Step 6: Sector-dict Dataset/DataLoader + paper augmentations
 - [ ] **Checkpoint:** pipeline runs end-to-end on pilot subset
