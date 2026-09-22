@@ -14,7 +14,7 @@ Authoritative plan: `tasks/plan.md` (integrates `references/plan.md`)
 
 ## M1: Pilot Data Pipeline (Steps 2–6, ~20-patient subset)
 
-- [ ] Step 2: Segmentation-guided 2D cropping (Fig. 1, 128×128 LANCZOS)
+- [x] Step 2: Segmentation-guided 2D cropping (Fig. 1, 128×128 LANCZOS)
 - [ ] Step 3: PyRadiomics extraction + top-16 F-value selection (train-only)
 - [ ] Step 4: Synthetic clinical fields (Table 1 prevalences, label-independent)
 - [ ] Step 5: Exclusion criteria + stratified split → `splits.json` + seed
