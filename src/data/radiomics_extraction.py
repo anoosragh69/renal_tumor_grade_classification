@@ -106,8 +106,12 @@ def extract_2d_radiomics(img_arr_2d, mask_arr_2d, patient_id, slice_idx, mock=Fa
         return None
 
     if mock or not PYRADIOMICS_AVAILABLE:
-        # Return 105 reproducible synthetic features for pipeline testing
-        rng = np.random.default_rng(seed=hash((patient_id, slice_idx)) % (2**31))
+        # Return 105 reproducible synthetic features for pipeline testing.
+        # Deterministic seed: Python's hash() is salted per-process (PYTHONHASHSEED),
+        # which made mock features non-reproducible across runs; crc32 is stable.
+        import zlib
+        stable_seed = zlib.crc32(f"{patient_id}:{slice_idx}".encode()) % (2**31)
+        rng = np.random.default_rng(seed=stable_seed)
         feature_names = (
             [f"original_firstorder_{n}" for n in ["Energy","Entropy","Kurtosis","Maximum","MeanAbsoluteDeviation",
              "Mean","Median","Minimum","Range","RobustMeanAbsoluteDeviation","RootMeanSquared","Skewness",
@@ -202,9 +206,10 @@ def run_extraction(paths, kits_meta, mock=False):
             continue
         seg_arr = sitk.GetArrayFromImage(sitk.ReadImage(seg_path))
 
-        # Binary label from kits.json
+        # Binary label from kits.json (real mirror uses "tumor_isup_grade",
+        # mock fixtures use "isup_grade" — accept both)
         meta    = kits_meta.get(patient_id, {})
-        label   = isup_to_binary(meta.get("isup_grade"))
+        label   = isup_to_binary(meta.get("tumor_isup_grade") or meta.get("isup_grade"))
 
         patch_files = sorted(glob.glob(os.path.join(pat_dir, "slice_*.npy")))
         for patch_file in patch_files:
@@ -317,7 +322,8 @@ def main():
         df_train_top = df_top[df_top["patient_id"].isin(train_ids)].copy()
         df_other     = df_top[~df_top["patient_id"].isin(train_ids)].copy()
         df_train_top, scaler = normalize_features(df_train_top, top16)
-        df_other, _          = normalize_features(df_other, top16, scaler=scaler)
+        if len(df_other) > 0:   # scaler.transform errors on 0-sample frames (empty val/test)
+            df_other, _ = normalize_features(df_other, top16, scaler=scaler)
         df_top = pd.concat([df_train_top, df_other]).sort_values(["patient_id", "slice_idx"])
     else:
         df_top, scaler = normalize_features(df_top, top16)
