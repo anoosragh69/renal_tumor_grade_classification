@@ -2,3 +2,9 @@ kits19/*
 references/*
 __pycache__/
 *.pyc
+
+# Data artifacts stay out of git (plan §2) — only split/selection artifacts are versioned
+data/interim/
+data/processed/*
+!data/processed/splits.json
+!data/processed/top16_features.json
