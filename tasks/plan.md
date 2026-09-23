@@ -198,7 +198,7 @@ Structure mirroring the paper: Intro → Methods (data, model, stats) → Result
 | M0 | Data downloaded + exploration + literature review | ✅ done |
 | M1 | Pipeline end-to-end on ~20-patient pilot (crop → radiomics → synthetic → split) | ✅ done (2026-09-22 mock pilot 8/2/3; **re-run on real kits19 2026-09-23** → 48/6/12 patients; **real PyRadiomics extraction executed 2026-09-23** — all 210 cases, top-16 re-selected train-only and refrozen) |
 | M2 | vViT overfits a tiny subset (architecture + loss sanity check) | ✅ done (2026-09-23, 16-slice subset loss 0.52→0.0014) |
-| M3 | Full training run; paper-style metrics table reproduced | 🟡 7d+9a done 2026-09-23 (200 epochs, best val_acc 0.9277 @ ep67; **test acc 0.531 / AUROC 0.568 — severe overfit, model does not generalize;** mild-class-balanced splits, so gap is small-sample checkpoint luck; revisit with epoch/arch sweep + CV before M5/M6) |
+| M3 | Full training run; paper-style metrics table reproduced | ✅ done 2026-09-23 — 7d+9a+table (`table2_style.md`); test acc 0.531 / AUROC 0.568 → **severe overfit, model does not generalize** (balanced splits; small-sample checkpoint luck); revisit training protocol (epoch/arch sweep, CV) before M5/M6 |
 | M4 | Baselines (ViT/ConvNeXt/ResNeXt) trained; DeLong/McNemar table | pending |
 | M5 | Permutation importance + Fig. 5-style plots | pending |
 | M6 | Attention fusion improvement implemented, compared vs voting | pending |

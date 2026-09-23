@@ -30,12 +30,12 @@ Authoritative plan: `tasks/plan.md` (integrates `references/plan.md`)
 - [x] Step 7c: BCE multi-sector loss + Adam (paper hyperparams) — `src/training/train.py`
 - [x] **Checkpoint:** model overfits a tiny subset ✅ (2026-09-23) — 16-slice subset, loss 0.52→0.0014 over 60 epochs; also verified on real kits19 batch (train 48 / val 6 / test 12; radiomics mock-mode)
 
-## M3: Full Training (Steps 7–9)
+## M3: Full Training (Steps 7–9) ✅ checkpoint produced (2026-09-23)
 
 - [x] Step 7d: Full 200-epoch training run, best-val checkpoint ✅ (2026-09-23) — `src/training/run_training.py` (best-val-acc checkpointing, TensorBoard + JSONL logging); first full run on real radiomics: **best val_acc 0.9277 @ epoch 67**, train loss →~0 by epoch ~15 (val loss rises steadily → overfit; small dataset, expected), checkpoints `results/checkpoints/vvit_best.pt` + `vvit_last.pt`
 - [x] Step 9a scaffolding: metrics + bootstrap CI + patient-level aggregation — `src/training/evaluation.py`
 - [x] Step 9a full run ✅ (2026-09-23) — `src/training/run_evaluation.py` on `vvit_best.pt` (ep 67), test 12 patients / 2,227 slices: **image-level acc 0.531 [95% CI 0.508–0.551], κ 0.061, AUROC 0.568; patient-level (6 low + 6 high) acc 0.500, AUROC 0.639**; per-head table in `results/metrics/test_metrics.json`. **⚠ Generalization gap:** val_acc 0.93 vs test ~0.53 — severe overfit on 48 train patients; val is balanced 3/3 so it's a lucky 6-patient checkpoint selection, not class skew. Mitigations to consider for M3/Step 8: earlier-stop sweep, smaller depth/embed, stronger aug, k-fold CV.
-- [ ] **Checkpoint:** paper-style metrics table reproduced 🟡 (table exists; performance far below paper's reported values — see note)
+- [x] **Checkpoint:** paper-style metrics table produced ✅ (2026-09-23) — `src/training/metrics_table.py` renders Table 2-equivalent (per-sector heads + majority-vote fusion, Acc/Sens/Spec/PPV/NPV/F1/κ/AUC with bootstrap 95% CI, image- and patient-level) → `results/metrics/table2_style.{md,csv}`; noted 12-patient test split vs paper's 30 (deviation, plan §6). Performance near chance — overfit finding stands; revisit training protocol before M5/M6.
 
 ## M4: Baselines & Statistical Tests (Steps 8–9)
 
