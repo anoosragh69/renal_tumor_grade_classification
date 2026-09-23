@@ -150,17 +150,19 @@ Augmentations (train split, **image sector only**): horizontal flip, vertical fl
 
 **Status:** ✅ complete (commit `190b20f`) — `src/data/dataset.py` rewritten as `RenalTumorSectorDataset` + `get_dataloaders()`; self-test verifies schema, train-only augmentation, val/test determinism, label consistency, split disjointness. Sample also carries `patient_id`/`slice_idx` metadata for patient-level aggregation (Step 9) and permutation importance (Step 10).
 
-### Step 7 — vViT model (Fig. 3) [NEW — core of project]
+### Step 7 — vViT model (Fig. 3) [NEW — core of project] — skeleton ✅
 1. **Sector tokenizers:** linear projection per sector into shared embedding dim
-   - embedding dim: **128** · heads: **8** (head dim 64) · MLP dim: **32** · depth: **8**
+   - embedding dim: **128** · heads: **8** (head dim 16 — plan's "64" incompatible with embed/heads; report deviation) · MLP dim: **32** · depth: **8**
 2. **Class token:** learnable embedding prepended to the sector sequence
 3. **Sequence:** `[class, demographic, comorbidity, habit, radiomic, image]` → `(batch, 6, 128)`
 4. **Transformer encoder:** pre-norm MHA + MLP blocks × 8 (manual implementation or customized `nn.TransformerEncoder`)
 5. **Per-sector heads:** each of the 6 output tokens → own linear classifier → 6 sector logits (enables Table 2 per-sector metrics)
-6. **Baseline fusion:** majority voting across the 6 sector predictions (implement first to reproduce paper numbers)
-7. **Loss:** BCE per sector head, joint backprop through shared encoder (paper under-specifies aggregation — document our choice)
-8. **Optimizer:** Adam, β1=0.9, β2=0.999, ε=1e-8, weight_decay=0, AMSGrad=False (exact paper match)
-9. **Training:** 200 epochs, save best-validation-accuracy checkpoint
+6. **Baseline fusion:** majority voting across the 6 sector predictions (implement first to reproduce paper numbers) — pending
+7. **Loss:** BCE per sector head, joint backprop through shared encoder (paper under-specifies aggregation — document our choice) — pending
+8. **Optimizer:** Adam, β1=0.9, β2=0.999, ε=1e-8, weight_decay=0, AMSGrad=False (exact paper match) — pending
+9. **Training:** 200 epochs, save best-validation-accuracy checkpoint — pending
+
+**Skeleton status:** ✅ complete — `src/models/sectors.py` (`SectorTokenizer`, `PerSectorHead`) + `src/models/vvit.py` (`VViT`); dummy-tensor self-test verifies SECTOR_DIMS contract, forward `(B,6)`, grad flow (incl. class token), eval determinism.
 
 ### Step 8 — Baseline comparison models [REWRITE]
 timm ViT / ConvNeXt / ResNeXt, image-only, 2D 128×128 input, same 200 epochs / same augmentation / same train-val split → Table 3 comparison. Note pretrained-vs-scratch choice as a deviation (paper doesn't specify).

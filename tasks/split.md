@@ -38,7 +38,7 @@ Divides `todo.md` / `tasks/plan.md` between 2 teammates. Shared milestones stay 
 **Owns:** vViT + baselines (Steps 7–8), training/eval/stats (Step 9), improvement (Step 11), report model/results sections
 
 ### Parallel prep (can start before M1 finishes)
-- [ ] Step 7 skeleton: sector tokenizers, class token, transformer encoder, per-sector heads (test with dummy tensors)
+- [x] Step 7 skeleton: sector tokenizers, class token, transformer encoder, per-sector heads (test with dummy tensors) — `src/models/vvit.py` + `src/models/sectors.py`; self-test passed (embed 128, depth 8, heads 8 → head_dim 16; plan's "head dim 64" incompatible with embed/heads, documented as report deviation)
 - [ ] Step 9 scaffolding: metrics + bootstrap CI, McNemar, Mann–Whitney wrappers
 - [ ] DeLong test implementation *(independent of data — develop on synthetic predictions)*
 

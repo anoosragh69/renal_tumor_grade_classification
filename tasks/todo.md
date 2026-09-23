@@ -25,8 +25,8 @@ Authoritative plan: `tasks/plan.md` (integrates `references/plan.md`)
 
 ## M2: vViT Sanity Check (Step 7)
 
-- [ ] Step 7a: Sector tokenizers + class token + transformer encoder
-- [ ] Step 7b: Per-sector heads + majority-voting fusion
+- [x] Step 7a: Sector tokenizers + class token + transformer encoder (+ per-sector heads) — `src/models/vvit.py` skeleton, dummy self-test passed
+- [ ] Step 7b: Majority-voting fusion
 - [ ] Step 7c: BCE multi-sector loss + Adam (paper hyperparams)
 - [ ] **Checkpoint:** model overfits a tiny subset
 
