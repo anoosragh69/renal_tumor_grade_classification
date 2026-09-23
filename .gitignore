@@ -12,3 +12,6 @@ data/processed/*
 
 # graphify knowledge-graph outputs (skill-generated, not source)
 graphify-out/
+
+# Training outputs (checkpoints/metrics/logs) not versioned
+results/
