@@ -14,10 +14,10 @@ Authoritative plan: `tasks/plan.md` (integrates `references/plan.md`)
 
 ## M1: Pilot Data Pipeline (Steps 2–6, ~20-patient subset)
 
-> ✅ **Real data re-run 2026-09-23:** Steps 2–5 on `kits19/data/` (210 with segs) → split **train 48 / val 6 / test 12** patients (9467/1178/2230 slices). Radiomics still on mock features — **pyradiomics 3.1.0 now installed** in Miniconda env `radiomics` (Python 3.9; no cp314 wheels); full extraction script ready (`--workers`, resume checkpoints) but **not yet executed** (takes ~50 min on 7 workers). Earlier 40-case mock pilot (8/2/3) superseded for real-data work.
+> ✅ **Real data re-run 2026-09-23:** Steps 2–5 on `kits19/data/` (210 with segs) → split **train 48 / val 6 / test 12** patients (9467/1178/2230 slices). Radiomics **now real** — full PyRadiomics extraction executed 2026-09-23 in conda env `radiomics` (all 210 patients, 41,520 slices) with parallel workers + per-patient resume checkpoints; **top-16 re-selected train-only** by F-value and refrozen (all GLCM/GLDM/first-order texture — no shape features survived vs mock). Earlier 40-case mock pilot (8/2/3) superseded for real-data work.
 
 - [x] Step 2: Segmentation-guided 2D cropping (Fig. 1, 128×128 LANCZOS)
-- [x] Step 3: PyRadiomics extraction + top-16 F-value selection (train-only) — script ready for real run (conda env + parallel/resume); current CSVs still mock until full extraction executes
+- [x] Step 3: PyRadiomics extraction + top-16 F-value selection (train-only) — **real run complete 2026-09-23** (210 patients, 41,520 slices; `radiomics_all.csv` 105 features; frozen real `top16_features.json`; train-fit scaler `radiomics_scaler.pkl`)
 - [x] Step 4: Synthetic clinical fields (Table 1 prevalences, label-independent)
 - [x] Step 5: Exclusion criteria + stratified split → `splits.json` + seed
 - [x] Step 6: Sector-dict Dataset/DataLoader + paper augmentations (commit `190b20f`)
@@ -32,7 +32,7 @@ Authoritative plan: `tasks/plan.md` (integrates `references/plan.md`)
 
 ## M3: Full Training (Steps 7–9)
 
-- [ ] Step 7d: Full 200-epoch training run, best-val checkpoint
+- [x] Step 7d: Full 200-epoch training run, best-val checkpoint ✅ (2026-09-23) — `src/training/run_training.py` (best-val-acc checkpointing, TensorBoard + JSONL logging); first full run on real radiomics: **best val_acc 0.9277 @ epoch 67**, train loss →~0 by epoch ~15 (val loss rises steadily → overfit; small dataset, expected), checkpoints `results/checkpoints/vvit_best.pt` + `vvit_last.pt`
 - [x] Step 9a scaffolding: metrics + bootstrap CI + patient-level aggregation — `src/training/evaluation.py` (full run pending trained model)
 - [ ] **Checkpoint:** paper-style metrics table reproduced
 
@@ -68,7 +68,7 @@ Authoritative plan: `tasks/plan.md` (integrates `references/plan.md`)
 ## Notes
 - **Superseded work:** old Tasks 6–15 (3D CNN / early-fusion pipeline) are replaced by the integrated plan — see mapping table in `tasks/plan.md` §8.
 - **Reusable code:** SimpleITK I/O, kits.json loading, metrics, trainer/baseline skeletons — disposition table in `tasks/plan.md` §1.
-- **Current status:** M0 + M1 complete (2026-09-22); M2 complete (2026-09-23) — vViT skeleton + voting + BCE/Adam + overfit sanity on real kits19 split (48/6/12 patients; 9467/1178/2230 slices).
-- **Dataset:** Real `kits19/data/` present (210 cases with segmentation + kits.json; cases 00210–00299 imaging-only). Steps 2–5 re-run 2026-09-23 → `splits.json` + `top16_features.json` updated. **Radiomics CSVs still mock** — real extraction ready but pending run.
+- **Current status:** M0 + M1 complete (2026-09-22); M2 complete (2026-09-23); Step 7d full training run complete (2026-09-23) — vViT trained 200 epochs on real kits19 split (48/6/12 patients; 9455/1176/2223 usable slices after radiomics/crop intersection), best val_acc 0.9277 @ epoch 67. Next up: Step 9a full test-set metrics on `vvit_best.pt`, then M4 baselines.
+- **Dataset:** Real `kits19/data/` present (210 cases with segmentation + kits.json; cases 00210–00299 imaging-only). Steps 2–5 re-run 2026-09-23 → `splits.json` + **real** `top16_features.json` (PyRadiomics on all 210 cases; see M1 note).
 - **Radiomics env:** pyradiomics 3.1.0 in Miniconda env `radiomics` (`%USERPROFILE%\miniconda3\envs\radiomics\python.exe`; Python 3.9, numpy 1.26.4 — no cp314 wheels for pyradiomics). Full run: that python + `src/data/radiomics_extraction.py --splits data/processed/splits.json --workers 7` (~50 min; per-patient resume checkpoints in `data/processed/radiomics_parts/`). `normalize=True` + binWidth=25 gives ~0.4 s/slice (~20× vs raw).
 - **Environment:** torch 2.14.0+**cu126** + torchvision 0.29.0+cu126 (manual wheels from cu126 index; cu128 lacks 2.14.0 for py3.14). `torch.cuda.is_available()=True` on RTX 3050 Laptop 6GB.
