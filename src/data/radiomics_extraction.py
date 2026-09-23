@@ -36,9 +36,8 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger(__name__)
 
 # ── PyRadiomics availability check ────────────────────────────────────────────
-# PyRadiomics requires a C compiler to build on Windows; install via:
-#   conda install -c conda-forge pyradiomics
-# Until then, the script runs in mock mode (--mock flag or auto-detected).
+# pyradiomics has no cp314 wheels; use the Miniconda env:
+#   %USERPROFILE%\miniconda3\envs\radiomics\python.exe
 try:
     import radiomics  # noqa: F401
     from radiomics import featureextractor as _fe  # noqa: F401
@@ -47,8 +46,44 @@ except ImportError:
     PYRADIOMICS_AVAILABLE = False
     log.warning(
         "pyradiomics not installed. Running in MOCK mode. "
-        "Install via: conda install -c conda-forge pyradiomics"
+        "Run with the conda env python for real features."
     )
+
+# Cached extractor — rebuild once per process (enableAllFeatures is not free).
+# normalize=True z-scores intensities so binWidth=25 is meaningful and ~20×
+# faster on uint16-scaled crops (raw binWidth=25 → ~10s/slice → ~0.4s/slice).
+_EXTRACTOR = None
+
+
+def _get_extractor():
+    global _EXTRACTOR
+    if _EXTRACTOR is None:
+        from radiomics import featureextractor
+        logging.getLogger("radiomics").setLevel(logging.ERROR)
+        _EXTRACTOR = featureextractor.RadiomicsFeatureExtractor(
+            force2D=True,
+            force2Ddimension=0,
+            binWidth=25,
+            normalize=True,
+            resampledPixelSpacing=None,
+            interpolator="sitkBSpline",
+            additionalInfo=False,  # skip diagnostics_* keys
+        )
+        _EXTRACTOR.enableAllFeatures()
+    return _EXTRACTOR
+
+
+def _to_float(v):
+    """Coerce pyradiomics values (often 0-d/1-element ndarray) to float; None if not scalar."""
+    if isinstance(v, np.ndarray):
+        if v.size == 1:
+            return float(v.reshape(-1)[0])
+        return None
+    if isinstance(v, (bool, np.bool_)):
+        return None
+    if isinstance(v, (int, float, np.floating, np.integer)):
+        return float(v)
+    return None
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 TARGET_SIZE = (128, 128)
@@ -144,35 +179,26 @@ def extract_2d_radiomics(img_arr_2d, mask_arr_2d, patient_id, slice_idx, mock=Fa
         return {name: float(rng.normal()) for name in feature_names}
 
     # ── Real PyRadiomics extraction ───────────────────────────────────────────
-    from radiomics import featureextractor
-    logging.getLogger("radiomics").setLevel(logging.ERROR)
-
     img_uint = (img_arr_2d * 65535).astype(np.uint16)
     img_3d   = sitk.GetImageFromArray(img_uint[np.newaxis, :, :])
     mask_3d  = sitk.GetImageFromArray(mask_uint[np.newaxis, :, :])
     img_3d.SetSpacing((1.0, 1.0, 1.0))
     mask_3d.SetSpacing((1.0, 1.0, 1.0))
 
-    settings = {
-        "force2D": True,
-        "force2Ddimension": 0,
-        "binWidth": 25,
-        "resampledPixelSpacing": None,
-        "interpolator": "sitkBSpline",
-    }
-    extractor = featureextractor.RadiomicsFeatureExtractor(**settings)
-    extractor.enableAllFeatures()
-
     try:
-        result = extractor.execute(img_3d, mask_3d, label=1)
+        result = _get_extractor().execute(img_3d, mask_3d, label=1)
     except Exception as e:
         log.debug("Radiomics failed for %s slice %d: %s", patient_id, slice_idx, e)
         return None
 
-    return {
-        k: float(v) for k, v in result.items()
-        if not k.startswith("diagnostics_") and isinstance(v, (int, float, np.floating, np.integer))
-    }
+    out = {}
+    for k, v in result.items():
+        if k.startswith("diagnostics_"):
+            continue
+        fv = _to_float(v)
+        if fv is not None and np.isfinite(fv):
+            out[k] = fv
+    return out or None
 
 
 def build_slice_mask(seg_arr, slice_idx):
@@ -183,61 +209,131 @@ def build_slice_mask(seg_arr, slice_idx):
 
 # ── Main pipeline ─────────────────────────────────────────────────────────────
 
-def run_extraction(paths, kits_meta, mock=False):
-    """Iterate over all interim patches and extract radiomics features."""
+def _extract_one_patient(job):
+    """Worker: extract all slices for one patient. Returns list of row dicts."""
+    pat_dir, kits_meta, mock = job
+    patient_id = os.path.basename(pat_dir)
+    from PIL import Image as PILImage
+
+    paths = get_paths()
+    kits19_dir = paths["kits19_data"]
+    seg_path = os.path.join(kits19_dir, patient_id, "segmentation.nii.gz")
+    if not os.path.exists(seg_path):
+        return patient_id, None  # skip marker
+
+    seg_arr = sitk.GetArrayFromImage(sitk.ReadImage(seg_path))
+    meta  = kits_meta.get(patient_id, {})
+    label = isup_to_binary(meta.get("tumor_isup_grade") or meta.get("isup_grade"))
+
     rows = []
+    patch_files = sorted(glob.glob(os.path.join(pat_dir, "slice_*.npy")))
+    for patch_file in patch_files:
+        slice_idx = int(os.path.basename(patch_file).replace("slice_", "").replace(".npy", ""))
+        if slice_idx >= seg_arr.shape[0]:
+            continue
+        img_arr = np.load(patch_file)
+        seg_slice = seg_arr[slice_idx]
+        if not np.any(seg_slice > 0):
+            continue
+        coords = np.argwhere(seg_slice > 0)
+        r0, c0 = coords.min(axis=0)
+        r1, c1 = coords.max(axis=0)
+        mask_crop = (seg_slice[r0:r1+1, c0:c1+1] > 0).astype(np.uint8)
+        mask_resized = np.array(
+            PILImage.fromarray(mask_crop).resize((128, 128), resample=PILImage.Resampling.NEAREST)
+        )
+        feats = extract_2d_radiomics(img_arr, mask_resized, patient_id, slice_idx, mock=mock)
+        if feats is None:
+            continue
+        row = {"patient_id": patient_id, "slice_idx": slice_idx, "label": label}
+        row.update(feats)
+        rows.append(row)
+    return patient_id, rows
+
+
+def run_extraction(paths, kits_meta, mock=False, workers=None, resume=True):
+    """Extract radiomics for all interim patients, with optional parallel workers.
+
+    Checkpoints each patient to data/processed/radiomics_parts/<patient_id>.csv
+    so interrupted runs resume without redoing finished patients.
+    """
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
     interim_dir = paths["interim"]
-    kits19_dir  = paths["kits19_data"]
+    parts_dir = os.path.join(paths["processed"], "radiomics_parts")
+    os.makedirs(parts_dir, exist_ok=True)
 
     patient_dirs = sorted(glob.glob(os.path.join(interim_dir, "case_*")))
     if not patient_dirs:
         log.error("No cropped patches found in %s — run segment_and_crop.py first.", interim_dir)
         sys.exit(1)
 
-    log.info("Extracting radiomics from %d patients (mock=%s)...", len(patient_dirs), mock or not PYRADIOMICS_AVAILABLE)
+    if workers is None:
+        workers = max(1, min(8, (os.cpu_count() or 2) - 1))
 
-    for pat_dir in tqdm(patient_dirs, desc="Patients"):
-        patient_id = os.path.basename(pat_dir)
-
-        # Load segmentation volume for mask slices
-        seg_path = os.path.join(kits19_dir, patient_id, "segmentation.nii.gz")
-        if not os.path.exists(seg_path):
-            log.warning("No segmentation for %s — skipping.", patient_id)
+    # Resume: skip patients already checkpointed
+    todo = []
+    loaded_parts = []
+    for pat_dir in patient_dirs:
+        pid = os.path.basename(pat_dir)
+        part_path = os.path.join(parts_dir, f"{pid}.csv")
+        done_path = part_path + ".done"
+        if resume and os.path.exists(done_path):
+            if os.path.exists(part_path) and os.path.getsize(part_path) > 0:
+                try:
+                    df_part = pd.read_csv(part_path)
+                    if len(df_part) > 0:
+                        loaded_parts.append(df_part)
+                except Exception:
+                    todo.append((pat_dir, kits_meta, mock))  # corrupt — redo
+            # .done with empty/missing csv = patient fully processed, zero rows
             continue
-        seg_arr = sitk.GetArrayFromImage(sitk.ReadImage(seg_path))
+        todo.append((pat_dir, kits_meta, mock))
 
-        # Binary label from kits.json (real mirror uses "tumor_isup_grade",
-        # mock fixtures use "isup_grade" — accept both)
-        meta    = kits_meta.get(patient_id, {})
-        label   = isup_to_binary(meta.get("tumor_isup_grade") or meta.get("isup_grade"))
+    log.info(
+        "Extracting radiomics: %d patients todo, %d already done (mock=%s, workers=%d)...",
+        len(todo), len(patient_dirs) - len(todo), mock or not PYRADIOMICS_AVAILABLE, workers,
+    )
 
-        patch_files = sorted(glob.glob(os.path.join(pat_dir, "slice_*.npy")))
-        for patch_file in patch_files:
-            slice_idx = int(os.path.basename(patch_file).replace("slice_", "").replace(".npy", ""))
-            img_arr  = np.load(patch_file)  # float32, 128×128
-
-            # Build 128×128 mask from original segmentation
-            from PIL import Image as PILImage
-            seg_slice   = seg_arr[slice_idx]
-            if not np.any(seg_slice > 0):
+    if not todo:
+        log.info("Nothing to extract (all patients checkpointed).")
+    elif workers <= 1 or mock:
+        # Sequential (mock is fast; single-worker easier to debug)
+        for job in tqdm(todo, desc="Patients"):
+            pid, rows = _extract_one_patient(job)
+            part_path = os.path.join(parts_dir, f"{pid}.csv")
+            if rows is None:
+                open(part_path + ".done", "w").close()
                 continue
-            coords  = np.argwhere(seg_slice > 0)
-            r0, c0  = coords.min(axis=0)
-            r1, c1  = coords.max(axis=0)
-            mask_crop = (seg_slice[r0:r1+1, c0:c1+1] > 0).astype(np.uint8)
-            mask_resized = np.array(
-                PILImage.fromarray(mask_crop).resize((128, 128), resample=PILImage.Resampling.NEAREST)
-            )
+            pd.DataFrame(rows).to_csv(part_path, index=False)
+            open(part_path + ".done", "w").close()
+            loaded_parts.append(pd.DataFrame(rows))
+    else:
+        # Parallel by patient. Worker must be importable → run via this module.
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_extract_one_patient, job): job[0] for job in todo}
+            for fut in tqdm(as_completed(futures), total=len(futures), desc="Patients"):
+                pat_dir = futures[fut]
+                pid = os.path.basename(pat_dir)
+                try:
+                    _, rows = fut.result()
+                except Exception as e:
+                    log.error("Worker failed for %s: %s", pid, e)
+                    continue
+                part_path = os.path.join(parts_dir, f"{pid}.csv")
+                if rows is None:
+                    open(part_path + ".done", "w").close()
+                    continue
+                pd.DataFrame(rows).to_csv(part_path, index=False)
+                open(part_path + ".done", "w").close()
+                loaded_parts.append(pd.DataFrame(rows))
 
-            feats = extract_2d_radiomics(img_arr, mask_resized, patient_id, slice_idx, mock=mock)
-            if feats is None:
-                continue
-
-            row = {"patient_id": patient_id, "slice_idx": slice_idx, "label": label}
-            row.update(feats)
-            rows.append(row)
-
-    return pd.DataFrame(rows)
+    if not loaded_parts:
+        return pd.DataFrame()
+    frames = [df for df in loaded_parts if df is not None and len(df) > 0]
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True).sort_values(["patient_id", "slice_idx"])
 
 
 def select_top_k_features(df_train, k=TOP_K):
@@ -277,6 +373,10 @@ def main():
     parser.add_argument("--splits", default=None, help="Path to splits.json (from Step 5). If omitted, runs unsplit.")
     parser.add_argument("--mock",   action="store_true",
                         help="Use synthetic features instead of pyradiomics (auto-set if pyradiomics unavailable).")
+    parser.add_argument("--workers", type=int, default=None,
+                        help="Parallel patient workers (default: cpu_count-1, max 8).")
+    parser.add_argument("--no-resume", action="store_true",
+                        help="Ignore existing radiomics_parts checkpoints and re-extract everything.")
     args = parser.parse_args()
 
     mock = args.mock or not PYRADIOMICS_AVAILABLE
@@ -288,7 +388,8 @@ def main():
     log.info("Loaded metadata for %d patients.", len(kits_meta))
 
     # Run radiomics extraction
-    df = run_extraction(paths, kits_meta, mock=mock)
+    df = run_extraction(paths, kits_meta, mock=mock,
+                        workers=args.workers, resume=not args.no_resume)
     if df.empty:
         log.error("No features extracted. Aborting.")
         sys.exit(1)

@@ -196,7 +196,7 @@ Structure mirroring the paper: Intro → Methods (data, model, stats) → Result
 | # | Checkpoint | Status |
 |---|---|---|
 | M0 | Data downloaded + exploration + literature review | ✅ done |
-| M1 | Pipeline end-to-end on ~20-patient pilot (crop → radiomics → synthetic → split) | ✅ done (2026-09-22 mock pilot 8/2/3; **re-run on real kits19 2026-09-23** → 48/6/12 patients, radiomics mock-mode) |
+| M1 | Pipeline end-to-end on ~20-patient pilot (crop → radiomics → synthetic → split) | ✅ done (2026-09-22 mock pilot 8/2/3; **re-run on real kits19 2026-09-23** → 48/6/12 patients; radiomics CSVs still mock — pyradiomics installed, real extraction pending run) |
 | M2 | vViT overfits a tiny subset (architecture + loss sanity check) | ✅ done (2026-09-23, 16-slice subset loss 0.52→0.0014) |
 | M3 | Full training run; paper-style metrics table reproduced | pending |
 | M4 | Baselines (ViT/ConvNeXt/ResNeXt) trained; DeLong/McNemar table | pending |
@@ -221,7 +221,7 @@ Structure mirroring the paper: Intro → Methods (data, model, stats) → Result
 | Risk | Impact | Mitigation |
 |---|---|---|
 | WHO/ISUP grades missing/incomplete in kits.json | High | Audit early in Step 1; fall back to TCIA pull if needed |
-| PyRadiomics install issues (Windows) | High | Test on 1 case first; use provided wheels/conda |
+| PyRadiomics install issues (Windows) | High | Resolved: no cp314 wheels → Miniconda env `radiomics` (Python 3.9 + pyradiomics 3.1.0); smoke-tested |
 | DeLong implementation time | Medium | Base on known open-source U-statistic snippet |
 | 200-epoch runs long | Medium | TensorBoard logging; small-epoch pilot runs first |
 | Synthetic sectors add label-independent noise | Low (by design) | Validates permutation-importance low-importance finding |
