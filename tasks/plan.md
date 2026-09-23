@@ -150,29 +150,29 @@ Augmentations (train split, **image sector only**): horizontal flip, vertical fl
 
 **Status:** ✅ complete (commit `190b20f`) — `src/data/dataset.py` rewritten as `RenalTumorSectorDataset` + `get_dataloaders()`; self-test verifies schema, train-only augmentation, val/test determinism, label consistency, split disjointness. Sample also carries `patient_id`/`slice_idx` metadata for patient-level aggregation (Step 9) and permutation importance (Step 10).
 
-### Step 7 — vViT model (Fig. 3) [NEW — core of project] — skeleton ✅
+### Step 7 — vViT model (Fig. 3) [NEW — core of project] — through 7c ✅
 1. **Sector tokenizers:** linear projection per sector into shared embedding dim
    - embedding dim: **128** · heads: **8** (head dim 16 — plan's "64" incompatible with embed/heads; report deviation) · MLP dim: **32** · depth: **8**
 2. **Class token:** learnable embedding prepended to the sector sequence
 3. **Sequence:** `[class, demographic, comorbidity, habit, radiomic, image]` → `(batch, 6, 128)`
-4. **Transformer encoder:** pre-norm MHA + MLP blocks × 8 (manual implementation or customized `nn.TransformerEncoder`)
+4. **Transformer encoder:** pre-norm MHA + MLP blocks × 8 (`nn.TransformerEncoder`, `norm_first=True`)
 5. **Per-sector heads:** each of the 6 output tokens → own linear classifier → 6 sector logits (enables Table 2 per-sector metrics)
-6. **Baseline fusion:** majority voting across the 6 sector predictions (implement first to reproduce paper numbers) — pending
-7. **Loss:** BCE per sector head, joint backprop through shared encoder (paper under-specifies aggregation — document our choice) — pending
-8. **Optimizer:** Adam, β1=0.9, β2=0.999, ε=1e-8, weight_decay=0, AMSGrad=False (exact paper match) — pending
-9. **Training:** 200 epochs, save best-validation-accuracy checkpoint — pending
+6. **Baseline fusion:** majority voting across the 6 sector predictions — ✅ `src/models/fusion_baseline_vote.py` (strict majority ≥4/6; 3–3 ties broken by class token — our choice, paper silent)
+7. **Loss:** BCE per sector head, joint backprop through shared encoder — ✅ `multi_sector_bce_loss` in `src/training/train.py` (mean BCE over batch×6 heads; document as our aggregation choice)
+8. **Optimizer:** Adam, β1=0.9, β2=0.999, ε=1e-8, weight_decay=0, AMSGrad=False — ✅ `build_paper_adam` (lr default 1e-3, not specified by paper — our choice)
+9. **Training:** 200 epochs, save best-validation-accuracy checkpoint — pending (Step 7d / M3)
 
-**Skeleton status:** ✅ complete — `src/models/sectors.py` (`SectorTokenizer`, `PerSectorHead`) + `src/models/vvit.py` (`VViT`); dummy-tensor self-test verifies SECTOR_DIMS contract, forward `(B,6)`, grad flow (incl. class token), eval determinism.
+**Status:** ✅ through 7c — `src/models/sectors.py` + `src/models/vvit.py` + `fusion_baseline_vote.py` + `src/training/train.py`. Dummy self-test (SECTOR_DIMS, grad flow, eval determinism); voting edge cases; BCE/Adam hyperparams; **M2 overfit** on 16-slice subset (loss 0.52→0.0014, 60 epochs); integration on real kits19 batch (forward `(B,6)`, majority vote, BCE).
 
 ### Step 8 — Baseline comparison models [REWRITE]
-timm ViT / ConvNeXt / ResNeXt, image-only, 2D 128×128 input, same 200 epochs / same augmentation / same train-val split → Table 3 comparison. Note pretrained-vs-scratch choice as a deviation (paper doesn't specify).
+timm ViT / ConvNeXt / ResNeXt, image-only, 2D 128×128 input, same 200 epochs / same augmentation / same train-val split → Table 3 comparison. Note pretrained-vs-scratch choice as a deviation (paper doesn't specify). — pending
 
-### Step 9 — Evaluation [EXTEND]
-1. Image-based metrics: accuracy, sensitivity, specificity, PPV, NPV, F-score, log loss, Cohen's κ, AUC-ROC — each with bootstrap 95% CI (~1000× test-set resamples)
-2. Patient-level aggregation: majority vote for binary label; mean probability for AUC
-3. **DeLong test** for AUC comparison vs baselines (custom U-statistic implementation — budget real time; no standard library ships this)
-4. McNemar (`statsmodels.stats.contingency_tables.mcnemar`)
-5. Reproduce Fig. 5 ROC curves + permutation-importance boxplots
+### Step 9 — Evaluation [EXTEND] — scaffolding ✅
+1. Image-based metrics: accuracy, sensitivity, specificity, PPV, NPV, F-score, log loss, Cohen's κ, AUC-ROC — each with bootstrap 95% CI (~1000× test-set resamples) — ✅ scaffolding in `src/training/evaluation.py` (`binary_metrics`, `bootstrap_ci`, `auroc`; self-test AUROC matches sklearn); full run pending trained model
+2. Patient-level aggregation: majority vote for binary label; mean probability for AUC — ✅ `aggregate_patient`
+3. **DeLong test** for AUC comparison vs baselines — ✅ `src/stats_tests.py::delong_roc_test` (placement-value U-statistic; self-test cross-checks AUC vs sklearn, self-comparison p=1)
+4. McNemar — ✅ `evaluation.py::mcnemar_test` (statsmodels + exact/chi² fallback); comparison table pending models
+5. Reproduce Fig. 5 ROC curves + permutation-importance boxplots — pending
 
 ### Step 10 — Permutation feature importance (Fig. 4) [NEW]
 1. Baseline test accuracy with trained model
@@ -196,8 +196,8 @@ Structure mirroring the paper: Intro → Methods (data, model, stats) → Result
 | # | Checkpoint | Status |
 |---|---|---|
 | M0 | Data downloaded + exploration + literature review | ✅ done |
-| M1 | Pipeline end-to-end on ~20-patient pilot (crop → radiomics → synthetic → split) | ✅ done (2026-09-22, 40-case mock pilot → 8/2/3 split; real-data re-run pending path) |
-| M2 | vViT overfits a tiny subset (architecture + loss sanity check) | pending |
+| M1 | Pipeline end-to-end on ~20-patient pilot (crop → radiomics → synthetic → split) | ✅ done (2026-09-22 mock pilot 8/2/3; **re-run on real kits19 2026-09-23** → 48/6/12 patients, radiomics mock-mode) |
+| M2 | vViT overfits a tiny subset (architecture + loss sanity check) | ✅ done (2026-09-23, 16-slice subset loss 0.52→0.0014) |
 | M3 | Full training run; paper-style metrics table reproduced | pending |
 | M4 | Baselines (ViT/ConvNeXt/ResNeXt) trained; DeLong/McNemar table | pending |
 | M5 | Permutation importance + Fig. 5-style plots | pending |

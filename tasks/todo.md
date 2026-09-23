@@ -14,7 +14,7 @@ Authoritative plan: `tasks/plan.md` (integrates `references/plan.md`)
 
 ## M1: Pilot Data Pipeline (Steps 2–6, ~20-patient subset)
 
-> ⚠️ **Dataset pending:** Real KiTS19 path not yet provided. Steps 2–6 validated end-to-end on a **40-case seeded mock pilot** (`scratch/generate_pilot_data.py`, seed 42): exclusions exercised (4 null-grade, 22 slice-count outliers), equalise + stratified split → train 8 / val 2 / test 3; Step 6 self-test + handoff check passed. Re-run each script against real `kits19/data/` once path is confirmed.
+> ✅ **Real data re-run 2026-09-23:** Steps 2–5 on `kits19/data/` (210 with segs) → split **train 48 / val 6 / test 12** patients (9467/1178/2230 slices); radiomics **mock mode** (install pyradiomics for real features). Earlier 40-case mock pilot (8/2/3) superseded for real-data work.
 
 - [x] Step 2: Segmentation-guided 2D cropping (Fig. 1, 128×128 LANCZOS)
 - [x] Step 3: PyRadiomics extraction + top-16 F-value selection (train-only)
@@ -26,21 +26,21 @@ Authoritative plan: `tasks/plan.md` (integrates `references/plan.md`)
 ## M2: vViT Sanity Check (Step 7)
 
 - [x] Step 7a: Sector tokenizers + class token + transformer encoder (+ per-sector heads) — `src/models/vvit.py` skeleton, dummy self-test passed
-- [ ] Step 7b: Majority-voting fusion
-- [ ] Step 7c: BCE multi-sector loss + Adam (paper hyperparams)
-- [ ] **Checkpoint:** model overfits a tiny subset
+- [x] Step 7b: Majority-voting fusion — `src/models/fusion_baseline_vote.py` (≥4/6 majority; class-token tie-break)
+- [x] Step 7c: BCE multi-sector loss + Adam (paper hyperparams) — `src/training/train.py`
+- [x] **Checkpoint:** model overfits a tiny subset ✅ (2026-09-23) — 16-slice subset, loss 0.52→0.0014 over 60 epochs; also verified on real kits19 batch (train 48 / val 6 / test 12; radiomics mock-mode)
 
 ## M3: Full Training (Steps 7–9)
 
 - [ ] Step 7d: Full 200-epoch training run, best-val checkpoint
-- [ ] Step 9a: Full metrics + bootstrap 95% CI + patient-level aggregation
+- [x] Step 9a scaffolding: metrics + bootstrap CI + patient-level aggregation — `src/training/evaluation.py` (full run pending trained model)
 - [ ] **Checkpoint:** paper-style metrics table reproduced
 
 ## M4: Baselines & Statistical Tests (Steps 8–9)
 
 - [ ] Step 8: timm ViT / ConvNeXt / ResNeXt (2D image-only) trained
-- [ ] Step 9b: DeLong test (custom implementation)
-- [ ] Step 9c: McNemar test
+- [x] Step 9b: DeLong test (custom implementation) — `src/stats_tests.py`, self-test passed
+- [x] Step 9c: McNemar test — `src/training/evaluation.py::mcnemar_test` (statsmodels + fallback)
 - [ ] **Checkpoint:** DeLong/McNemar comparison table produced
 
 ## M5: Explainability (Step 10)
@@ -68,6 +68,6 @@ Authoritative plan: `tasks/plan.md` (integrates `references/plan.md`)
 ## Notes
 - **Superseded work:** old Tasks 6–15 (3D CNN / early-fusion pipeline) are replaced by the integrated plan — see mapping table in `tasks/plan.md` §8.
 - **Reusable code:** SimpleITK I/O, kits.json loading, metrics, trainer/baseline skeletons — disposition table in `tasks/plan.md` §1.
-- **Current status:** M0 + M1 complete (2026-09-22) — Steps 2–6 run end-to-end on a 40-case seeded mock pilot (8/2/3 split); handoff to B ready (`splits.json`, `get_dataloaders()`).
-- **Dataset pending:** User will provide real `kits19/data/` path — re-run Steps 2–6 for full validation (pilot artifacts in `kits19/`, `data/interim/`, `data/processed/` are gitignored except `splits.json` + `top16_features.json`).
+- **Current status:** M0 + M1 complete (2026-09-22); M2 complete (2026-09-23) — vViT skeleton + voting + BCE/Adam + overfit sanity on real kits19 split (48/6/12 patients; 9467/1178/2230 slices).
+- **Dataset:** Real `kits19/data/` present (210 cases with segmentation + kits.json; cases 00210–00299 imaging-only). Steps 2–5 re-run 2026-09-23 → `splits.json` + `top16_features.json` updated. **Radiomics currently mock mode** (pyradiomics not installed — `conda install -c conda-forge pyradiomics` for real features).
 - **Environment:** torch 2.14.0+**cpu** installed (PyPI default wheel; `torch.cuda.is_available()=False` despite RTX 2050). For B's 200-epoch runs, reinstall CUDA build: `pip install torch==2.14.0 torchvision==0.29.0 --index-url https://download.pytorch.org/whl/cu128` (verify cuXXX matches driver).
