@@ -39,7 +39,7 @@ Authoritative plan: `tasks/plan.md` (integrates `references/plan.md`)
 
 ## M4: Baselines & Statistical Tests (Steps 8–9)
 
-- [ ] Step 8: timm ViT / ConvNeXt / ResNeXt (2D image-only) trained
+- [~] Step 8: timm ViT / ConvNeXt / ResNeXt (2D image-only) — **code complete + smoke-verified (2026-09-23)**: `src/training/baselines.py` rewritten (supersedes Task-15 3D CNN/MLP) as `TimmBaseline` (`vit_small_patch16_224` augreg_in21k / `convnext_small` / `resnext50_32x4d` a1_in1k; ImageNet-pretrained, `in_chans=1` stem fold, 128→224 bilinear resize — paper silent on pretraining, deviation documented); `src/training/run_baselines.py` mirrors Step 7d/9a protocol exactly (same splits/augment/paper-Adam/BCE, 200 epochs best-val ckpt, test eval w/ bootstrap CI + patient-level); smoke run (2 ep, capped batches) passed for all 3 on real kits19 — fwd/bwd/ckpt/eval/CI OK. **Full 200-epoch runs pending** (GPU-time bound): `python src/training/run_baselines.py`
 - [x] Step 9b: DeLong test (custom implementation) — `src/stats_tests.py`, self-test passed
 - [x] Step 9c: McNemar test — `src/training/evaluation.py::mcnemar_test` (statsmodels + fallback)
 - [ ] **Checkpoint:** DeLong/McNemar comparison table produced

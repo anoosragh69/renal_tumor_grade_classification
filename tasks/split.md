@@ -56,7 +56,7 @@ Divides `todo.md` / `tasks/plan.md` between 2 teammates. Shared milestones stay 
 - [x] **M3 checkpoint:** paper-style metrics table ✅ (2026-09-23) — `src/training/metrics_table.py` → `results/metrics/table2_style.{md,csv}` (per-sector + fusion, bootstrap CIs, image + patient level); near-chance performance documented (overfit)
 
 ### M4: Baselines & Statistical Tests
-- [ ] Step 8: timm ViT / ConvNeXt / ResNeXt (2D image-only), same protocol
+- [~] Step 8: timm ViT / ConvNeXt / ResNeXt (2D image-only), same protocol — **code + smoke done (2026-09-23)**: `src/training/baselines.py` rewritten as `TimmBaseline` (`vit_small_patch16_224` / `convnext_small` / `resnext50_32x4d`, ImageNet-pretrained + `in_chans=1` + 128→224 resize — pretraining deviation documented); `src/training/run_baselines.py` = Step 7d/9a protocol clone (same splits/aug/Adam, best-val ckpt, test metrics JSON+CSV for Table 3/DeLong input); smoke (2 ep capped) passed all 3 backbones on real kits19. **Full runs pending GPU time** — one command: `python src/training/run_baselines.py`
 - [ ] Step 9b–c: DeLong + McNemar comparison table
 - [ ] **M4 checkpoint:** baseline comparison table
 
