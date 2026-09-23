@@ -168,8 +168,8 @@ Augmentations (train split, **image sector only**): horizontal flip, vertical fl
 timm ViT / ConvNeXt / ResNeXt, image-only, 2D 128×128 input, same 200 epochs / same augmentation / same train-val split → Table 3 comparison. Note pretrained-vs-scratch choice as a deviation (paper doesn't specify). — pending
 
 ### Step 9 — Evaluation [EXTEND] — scaffolding ✅
-1. Image-based metrics: accuracy, sensitivity, specificity, PPV, NPV, F-score, log loss, Cohen's κ, AUC-ROC — each with bootstrap 95% CI (~1000× test-set resamples) — ✅ scaffolding in `src/training/evaluation.py` (`binary_metrics`, `bootstrap_ci`, `auroc`; self-test AUROC matches sklearn); full run pending trained model
-2. Patient-level aggregation: majority vote for binary label; mean probability for AUC — ✅ `aggregate_patient`
+1. Image-based metrics: accuracy, sensitivity, specificity, PPV, NPV, F-score, log loss, Cohen's κ, AUC-ROC — each with bootstrap 95% CI (~1000× test-set resamples) — ✅ scaffolding in `src/training/evaluation.py` (`binary_metrics`, `bootstrap_ci`, `auroc`; self-test AUROC matches sklearn); **full run done via `src/training/run_evaluation.py` (2026-09-23): test image-level acc 0.531 [0.508–0.551], κ 0.061, AUROC 0.568 — generalization gap vs val_acc 0.93, severe overfit; see M3 note**
+2. Patient-level aggregation: majority vote for binary label; mean probability for AUC — ✅ `aggregate_patient` (test: acc 0.500 / AUROC 0.639 on 6 low + 6 high patients)
 3. **DeLong test** for AUC comparison vs baselines — ✅ `src/stats_tests.py::delong_roc_test` (placement-value U-statistic; self-test cross-checks AUC vs sklearn, self-comparison p=1)
 4. McNemar — ✅ `evaluation.py::mcnemar_test` (statsmodels + exact/chi² fallback); comparison table pending models
 5. Reproduce Fig. 5 ROC curves + permutation-importance boxplots — pending
@@ -198,7 +198,7 @@ Structure mirroring the paper: Intro → Methods (data, model, stats) → Result
 | M0 | Data downloaded + exploration + literature review | ✅ done |
 | M1 | Pipeline end-to-end on ~20-patient pilot (crop → radiomics → synthetic → split) | ✅ done (2026-09-22 mock pilot 8/2/3; **re-run on real kits19 2026-09-23** → 48/6/12 patients; **real PyRadiomics extraction executed 2026-09-23** — all 210 cases, top-16 re-selected train-only and refrozen) |
 | M2 | vViT overfits a tiny subset (architecture + loss sanity check) | ✅ done (2026-09-23, 16-slice subset loss 0.52→0.0014) |
-| M3 | Full training run; paper-style metrics table reproduced | 🟡 7d done 2026-09-23 (200 epochs, best val_acc 0.9277 @ ep67; overfits train — val loss ↑) — test-set metrics table pending |
+| M3 | Full training run; paper-style metrics table reproduced | 🟡 7d+9a done 2026-09-23 (200 epochs, best val_acc 0.9277 @ ep67; **test acc 0.531 / AUROC 0.568 — severe overfit, model does not generalize;** mild-class-balanced splits, so gap is small-sample checkpoint luck; revisit with epoch/arch sweep + CV before M5/M6) |
 | M4 | Baselines (ViT/ConvNeXt/ResNeXt) trained; DeLong/McNemar table | pending |
 | M5 | Permutation importance + Fig. 5-style plots | pending |
 | M6 | Attention fusion improvement implemented, compared vs voting | pending |

@@ -52,8 +52,8 @@ Divides `todo.md` / `tasks/plan.md` between 2 teammates. Shared milestones stay 
 
 ### M3: Full Training
 - [x] Step 7d: Full 200-epoch run, best-val checkpoint, TensorBoard logging ✅ (2026-09-23) — `src/training/run_training.py`; best val_acc 0.9277 @ epoch 67; train loss →~0 by ~ep15, val loss climbs (overfit on small set — best-val checkpoint used); artifacts `results/checkpoints/vvit_best.pt`, `results/metrics/train_metrics.jsonl`
-- [ ] Step 9a: Full metrics + patient-level aggregation
-- [ ] **M3 checkpoint:** paper-style metrics table
+- [x] Step 9a: Full metrics + patient-level aggregation ✅ (2026-09-23) — `src/training/run_evaluation.py` on best-val ckpt: test image-level acc 0.531 [0.508–0.551], κ 0.061, AUROC 0.568; patient-level acc 0.500, AUROC 0.639 — **generalization gap vs val_acc 0.93** (overfit; discuss epoch/arch sweep + CV before M5/M6)
+- [ ] **M3 checkpoint:** paper-style metrics table 🟡 (numbers produced; far below paper's values — see overfit note)
 
 ### M4: Baselines & Statistical Tests
 - [ ] Step 8: timm ViT / ConvNeXt / ResNeXt (2D image-only), same protocol

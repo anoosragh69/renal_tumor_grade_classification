@@ -33,8 +33,9 @@ Authoritative plan: `tasks/plan.md` (integrates `references/plan.md`)
 ## M3: Full Training (Steps 7–9)
 
 - [x] Step 7d: Full 200-epoch training run, best-val checkpoint ✅ (2026-09-23) — `src/training/run_training.py` (best-val-acc checkpointing, TensorBoard + JSONL logging); first full run on real radiomics: **best val_acc 0.9277 @ epoch 67**, train loss →~0 by epoch ~15 (val loss rises steadily → overfit; small dataset, expected), checkpoints `results/checkpoints/vvit_best.pt` + `vvit_last.pt`
-- [x] Step 9a scaffolding: metrics + bootstrap CI + patient-level aggregation — `src/training/evaluation.py` (full run pending trained model)
-- [ ] **Checkpoint:** paper-style metrics table reproduced
+- [x] Step 9a scaffolding: metrics + bootstrap CI + patient-level aggregation — `src/training/evaluation.py`
+- [x] Step 9a full run ✅ (2026-09-23) — `src/training/run_evaluation.py` on `vvit_best.pt` (ep 67), test 12 patients / 2,227 slices: **image-level acc 0.531 [95% CI 0.508–0.551], κ 0.061, AUROC 0.568; patient-level (6 low + 6 high) acc 0.500, AUROC 0.639**; per-head table in `results/metrics/test_metrics.json`. **⚠ Generalization gap:** val_acc 0.93 vs test ~0.53 — severe overfit on 48 train patients; val is balanced 3/3 so it's a lucky 6-patient checkpoint selection, not class skew. Mitigations to consider for M3/Step 8: earlier-stop sweep, smaller depth/embed, stronger aug, k-fold CV.
+- [ ] **Checkpoint:** paper-style metrics table reproduced 🟡 (table exists; performance far below paper's reported values — see note)
 
 ## M4: Baselines & Statistical Tests (Steps 8–9)
 
@@ -68,7 +69,7 @@ Authoritative plan: `tasks/plan.md` (integrates `references/plan.md`)
 ## Notes
 - **Superseded work:** old Tasks 6–15 (3D CNN / early-fusion pipeline) are replaced by the integrated plan — see mapping table in `tasks/plan.md` §8.
 - **Reusable code:** SimpleITK I/O, kits.json loading, metrics, trainer/baseline skeletons — disposition table in `tasks/plan.md` §1.
-- **Current status:** M0 + M1 complete (2026-09-22); M2 complete (2026-09-23); Step 7d full training run complete (2026-09-23) — vViT trained 200 epochs on real kits19 split (48/6/12 patients; 9455/1176/2223 usable slices after radiomics/crop intersection), best val_acc 0.9277 @ epoch 67. Next up: Step 9a full test-set metrics on `vvit_best.pt`, then M4 baselines.
+- **Current status:** M0 + M1 complete (2026-09-22); M2 + Steps 7d/9a complete (2026-09-23) — vViT trained 200 epochs on real split (48/6/12 patients; 9455/1176/2227 slices), best val_acc 0.9277 @ ep67, but **test acc ~0.53 (chance) — severe overfitting/generalization gap documented in M3 above**. Next: M4 baselines under same protocol (expected to expose same split difficulty), plus epoch/architecture sweep before M5/M6.
 - **Dataset:** Real `kits19/data/` present (210 cases with segmentation + kits.json; cases 00210–00299 imaging-only). Steps 2–5 re-run 2026-09-23 → `splits.json` + **real** `top16_features.json` (PyRadiomics on all 210 cases; see M1 note).
 - **Radiomics env:** pyradiomics 3.1.0 in Miniconda env `radiomics` (`%USERPROFILE%\miniconda3\envs\radiomics\python.exe`; Python 3.9, numpy 1.26.4 — no cp314 wheels for pyradiomics). Full run: that python + `src/data/radiomics_extraction.py --splits data/processed/splits.json --workers 7` (~50 min; per-patient resume checkpoints in `data/processed/radiomics_parts/`). `normalize=True` + binWidth=25 gives ~0.4 s/slice (~20× vs raw).
 - **Environment:** torch 2.14.0+**cu126** + torchvision 0.29.0+cu126 (manual wheels from cu126 index; cu128 lacks 2.14.0 for py3.14). `torch.cuda.is_available()=True` on RTX 3050 Laptop 6GB.
