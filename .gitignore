@@ -3,6 +3,7 @@ references/*
 __pycache__/
 *.pyc
 .opencode/
+.venv/
 
 # Data artifacts stay out of git (plan §2) — only split/selection artifacts are versioned
 data/interim/
