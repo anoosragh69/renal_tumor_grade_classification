@@ -160,12 +160,12 @@ Augmentations (train split, **image sector only**): horizontal flip, vertical fl
 6. **Baseline fusion:** majority voting across the 6 sector predictions — ✅ `src/models/fusion_baseline_vote.py` (strict majority ≥4/6; 3–3 ties broken by class token — our choice, paper silent)
 7. **Loss:** BCE per sector head, joint backprop through shared encoder — ✅ `multi_sector_bce_loss` in `src/training/train.py` (mean BCE over batch×6 heads; document as our aggregation choice)
 8. **Optimizer:** Adam, β1=0.9, β2=0.999, ε=1e-8, weight_decay=0, AMSGrad=False — ✅ `build_paper_adam` (lr default 1e-3, not specified by paper — our choice)
- 9. **Training:** 200 epochs, save best-validation-accuracy checkpoint — ✅ `src/training/run_training.py` (Adam 1e-3, batch 32, seed 42, TensorBoard + JSONL logs, `results/checkpoints/vvit_best.pt` / `vvit_last.pt`)
+ 9. **Training:** 200-epoch budget, save best-validation-accuracy checkpoint — ✅ `src/training/run_training.py` (Adam 1e-3, batch 32, seed 42, TensorBoard + JSONL logs, `results/checkpoints/vvit_best.pt` / `vvit_last.pt`); **protocol revision 2026-10-08:** early stopping (patience 15 on val_acc) + AMP (autocast/GradScaler) added for laptop budget — `--patience`, `--no-amp`; vViT re-run under revised protocol pending (M3 numbers predate it)
 
 **Status:** ✅ through 7d — `src/models/sectors.py` + `src/models/vvit.py` + `fusion_baseline_vote.py` + `src/training/train.py` + `src/training/run_training.py`. Dummy self-test (SECTOR_DIMS, grad flow, eval determinism); voting edge cases; BCE/Adam hyperparams; **M2 overfit** on 16-slice subset (loss 0.52→0.0014, 60 epochs); integration on real kits19 batch. **Full 200-epoch run on real PyRadiomics top-16 (2026-09-23):** best val_acc **0.9277 @ epoch 67**; train loss ≈0 by ~epoch 15 while val loss climbs → overfitting on small dataset as expected (risk table §7); best-val checkpoint guards final metrics.
 
 ### Step 8 — Baseline comparison models [REWRITE]
-timm ViT / ConvNeXt / ResNeXt, image-only, 2D 128×128 input, same 200 epochs / same augmentation / same train-val split → Table 3 comparison. Note pretrained-vs-scratch choice as a deviation (paper doesn't specify). — pending
+timm ViT / ConvNeXt / ResNeXt, image-only, 2D 128×128 input, same epochs / same augmentation / same train-val split → Table 3 comparison. Pretrained-vs-scratch choice noted as a deviation (paper doesn't specify). **Protocol fix 2026-10-08:** first full runs pinned train loss at label entropy (constant predictor — lr 1e-3 collapsed the pretrained backbones, feature rank 147→7/384; diagnosis `docs/baseline_training_diagnosis.md`, probe `src/training/diagnose_baseline.py`). Baselines now default **lr 1e-4** + **AMP** + **early stopping (patience 15)** + `num_workers 2` in `run_baselines.py` — all declared in §6. Code verified (3-epoch real run learns: loss 0.676→0.533); **full runs pending**: `python src/training/run_baselines.py`
 
 ### Step 9 — Evaluation [EXTEND] — scaffolding ✅
 1. Image-based metrics: accuracy, sensitivity, specificity, PPV, NPV, F-score, log loss, Cohen's κ, AUC-ROC — each with bootstrap 95% CI (~1000× test-set resamples) — ✅ scaffolding in `src/training/evaluation.py` (`binary_metrics`, `bootstrap_ci`, `auroc`; self-test AUROC matches sklearn); **full run done via `src/training/run_evaluation.py` (2026-09-23): test image-level acc 0.531 [0.508–0.551], κ 0.061, AUROC 0.568 — generalization gap vs val_acc 0.93, severe overfit; see M3 note**
@@ -199,7 +199,7 @@ Structure mirroring the paper: Intro → Methods (data, model, stats) → Result
 | M1 | Pipeline end-to-end on ~20-patient pilot (crop → radiomics → synthetic → split) | ✅ done (2026-09-22 mock pilot 8/2/3; **re-run on real kits19 2026-09-23** → 48/6/12 patients; **real PyRadiomics extraction executed 2026-09-23** — all 210 cases, top-16 re-selected train-only and refrozen) |
 | M2 | vViT overfits a tiny subset (architecture + loss sanity check) | ✅ done (2026-09-23, 16-slice subset loss 0.52→0.0014) |
 | M3 | Full training run; paper-style metrics table reproduced | ✅ done 2026-09-23 — 7d+9a+table (`table2_style.md`); test acc 0.531 / AUROC 0.568 → **severe overfit, model does not generalize** (balanced splits; small-sample checkpoint luck); revisit training protocol (epoch/arch sweep, CV) before M5/M6 |
-| M4 | Baselines (ViT/ConvNeXt/ResNeXt) trained; DeLong/McNemar table | pending |
+| M4 | Baselines (ViT/ConvNeXt/ResNeXt) trained; DeLong/McNemar table | pending — **code fixed 2026-10-08** (lr/AMP/early-stop; diagnosis `docs/baseline_training_diagnosis.md`), full runs + comparison table outstanding |
 | M5 | Permutation importance + Fig. 5-style plots | pending |
 | M6 | Attention fusion improvement implemented, compared vs voting | pending |
 | M7 | Report finalized | pending |
@@ -212,6 +212,8 @@ Structure mirroring the paper: Intro → Methods (data, model, stats) → Result
 - Patient counts after exclusions ≠ paper's 157→111/15/30 (source/seed differences)
 - Loss aggregation across sector heads under-specified in paper — document our choice
 - Baseline pretraining status (timm pretrained vs random init) — state explicitly
+- Baseline lr 1e-4 vs vViT 1e-3 — lr 1e-3 collapses pretrained backbones to a constant predictor (diagnosed, probe `src/training/diagnose_baseline.py`, writeup `docs/baseline_training_diagnosis.md`)
+- Early stopping (patience 15 on val accuracy) + AMP mixed precision added 2026-10-08 for laptop GPU budget — paper trains fixed epochs in fp32; 200 epochs remains the cap
 - Data source: kits19 GitHub mirror vs C4KC-KiTS TCIA (affects grade availability)
 
 ---
@@ -226,6 +228,8 @@ Structure mirroring the paper: Intro → Methods (data, model, stats) → Result
 | 200-epoch runs long | Medium | TensorBoard logging; small-epoch pilot runs first |
 | Synthetic sectors add label-independent noise | Low (by design) | Validates permutation-importance low-importance finding |
 | Small dataset → overfitting | Medium | Paper's augmentations, best-val checkpointing |
+| Pretrained backbone collapses to constant predictor at paper-Adam lr 1e-3 | High (hit during M4) | Probe `src/training/diagnose_baseline.py`; baselines default lr 1e-4 — `docs/baseline_training_diagnosis.md` |
+| Full 200-epoch runs too slow on laptop GPU | Medium | Early stopping (patience 15) + AMP + DataLoader workers; vViT ~15 min, baselines ~1 h/model |
 
 ---
 

@@ -56,9 +56,12 @@ Divides `todo.md` / `tasks/plan.md` between 2 teammates. Shared milestones stay 
 - [x] **M3 checkpoint:** paper-style metrics table ✅ (2026-09-23) — `src/training/metrics_table.py` → `results/metrics/table2_style.{md,csv}` (per-sector + fusion, bootstrap CIs, image + patient level); near-chance performance documented (overfit)
 
 ### M4: Baselines & Statistical Tests
-- [~] Step 8: timm ViT / ConvNeXt / ResNeXt (2D image-only), same protocol — **code + smoke done (2026-09-23)**: `src/training/baselines.py` rewritten as `TimmBaseline` (`vit_small_patch16_224` / `convnext_small` / `resnext50_32x4d`, ImageNet-pretrained + `in_chans=1` + 128→224 resize — pretraining deviation documented); `src/training/run_baselines.py` = Step 7d/9a protocol clone (same splits/aug/Adam, best-val ckpt, test metrics JSON+CSV for Table 3/DeLong input); smoke (2 ep capped) passed all 3 backbones on real kits19. **Full runs pending GPU time** — one command: `python src/training/run_baselines.py`
+- [~] Step 8: timm ViT / ConvNeXt / ResNeXt (2D image-only), same protocol — **code + smoke (2026-09-23)**: `src/training/baselines.py` as `TimmBaseline` (`vit_small_patch16_224` / `convnext_small` / `resnext50_32x4d`, ImageNet-pretrained + `in_chans=1` + 128→224 resize — pretraining deviation documented); `src/training/run_baselines.py` mirrors Step 7d/9a protocol.
+- [x] Step 8 diagnosis + protocol fix (2026-10-08): first full runs pinned at chance — lr 1e-3 collapsed pretrained backbones to a constant predictor (loss = label entropy; feature rank 147→7/384). Fixed: baseline **lr 1e-4**, **AMP**, **early stopping (patience 15)**, `num_workers 2`. Probe `src/training/diagnose_baseline.py`, writeup `docs/baseline_training_diagnosis.md`, verified on real kits19 (loss 0.676→0.533/3 epochs).
+- [ ] **Full runs** — one command: `python src/training/run_baselines.py` (200-epoch budget, early stop; ~1 h/model)
 - [ ] Step 9b–c: DeLong + McNemar comparison table
 - [ ] **M4 checkpoint:** baseline comparison table
+- [ ] vViT protocol-parity re-run (AMP + early stop) before Table 3: `python src/training/run_training.py` → `run_evaluation.py` → `metrics_table.py`
 
 ### M6: Improvement — Attention Fusion
 - [ ] Step 11a: `fusion_improved.py` — class-token head
