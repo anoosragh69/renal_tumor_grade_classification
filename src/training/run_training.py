@@ -1,8 +1,10 @@
 """
 Step 7d: Full vViT training run (plan §4 Step 7.9 / M3)
-=======================================================
-200 epochs with Adam (paper hyperparams via ``build_paper_adam``), best
-validation-accuracy checkpointing, TensorBoard logging (JSONL fallback when
+======================================================
+Up to 200 epochs with Adam (paper hyperparams via ``build_paper_adam``),
+best validation-accuracy checkpointing, early stopping (patience on val
+accuracy — laptop GPU budget; usually terminates well before 200),
+CUDA autocast + GradScaler (AMP), TensorBoard logging (JSONL fallback when
 tensorboard is unavailable).
 
 Model/loss: VViT (Step 7a) + majority-vote fusion proxy for metrics
@@ -15,7 +17,7 @@ Outputs (git-ignored under results/):
     results/runs/<timestamp>/             TensorBoard events (if available)
 
 Usage:
-    python src/training/run_training.py                      # 200 epochs, defaults
+    python src/training/run_training.py                      # 200-epoch budget, early stop
     python src/training/run_training.py --epochs 2 --smoke   # quick smoke run
 """
 import argparse
@@ -58,16 +60,18 @@ def batch_to_device(batch: dict, device: torch.device) -> dict:
 
 
 @torch.no_grad()
-def evaluate(model: VViT, loader, device: torch.device) -> dict:
+def evaluate(model: VViT, loader, device: torch.device, amp: bool = True) -> dict:
     """Mean val BCE + majority-vote accuracy over the loader."""
     model.eval()
     total_loss, total_correct, total_n = 0.0, 0, 0
+    use_amp = amp and device.type == "cuda"
     for batch in loader:
         labels = batch["label"].to(device)
         batch = batch_to_device(batch, device)
-        logits = model(batch)
-        loss = multi_sector_bce_loss(logits, labels)
-        preds = majority_vote(logits)
+        with torch.autocast(device_type=device.type, enabled=use_amp):
+            logits = model(batch)
+            loss = multi_sector_bce_loss(logits, labels.float())
+        preds = majority_vote(logits.float())
         total_loss += loss.item() * labels.shape[0]
         total_correct += int((preds == labels.long()).sum().item())
         total_n += labels.shape[0]
@@ -125,6 +129,10 @@ def train(args) -> dict:
     best_val_acc = -1.0
     best_epoch = -1
     epochs = args.epochs if not args.smoke else min(args.epochs, 2)
+    use_amp = (not args.no_amp) and device.type == "cuda"
+    scaler = torch.amp.GradScaler(enabled=use_amp)
+    patience = 0 if args.smoke else args.patience
+    no_improve, epochs_run, stopped_early = 0, 0, False
 
     for epoch in range(1, epochs + 1):
         model.train()
@@ -134,19 +142,23 @@ def train(args) -> dict:
             labels = batch["label"].to(device)
             batch = batch_to_device(batch, device)
             optimizer.zero_grad(set_to_none=True)
-            logits = model(batch)
-            loss = multi_sector_bce_loss(logits, labels)
-            loss.backward()
-            optimizer.step()
+            with torch.autocast(device_type=device.type, enabled=use_amp):
+                logits = model(batch)
+                loss = multi_sector_bce_loss(logits, labels.float())
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             ep_loss += loss.item() * labels.shape[0]
             ep_n += labels.shape[0]
         train_loss = ep_loss / max(ep_n, 1)
+        epochs_run = epoch
 
-        val = evaluate(model, loaders["val"], device)
+        val = evaluate(model, loaders["val"], device, amp=use_amp)
         elapsed = time.time() - t0
         row = {"type": "epoch", "run": run_name, "epoch": epoch,
                "train_loss": train_loss, "val_loss": val["val_loss"],
-               "val_acc": val["val_acc"], "lr": args.lr, "sec": round(elapsed, 2)}
+               "val_acc": val["val_acc"], "lr": args.lr, "sec": round(elapsed, 2),
+               "amp": use_amp}
         metrics_f.write(json.dumps(row) + "\n")
         metrics_f.flush()
         if writer is not None:
@@ -154,17 +166,25 @@ def train(args) -> dict:
             writer.add_scalar("loss/val", val["val_loss"], epoch)
             writer.add_scalar("acc/val", val["val_acc"], epoch)
         print(f"epoch {epoch:3d}/{epochs} | train_loss {train_loss:.4f} | "
-              f"val_loss {val['val_loss']:.4f} | val_acc {val['val_acc']:.4f} | {elapsed:.1f}s",
-              flush=True)
+              f"val_loss {val['val_loss']:.4f} | val_acc {val['val_acc']:.4f} | "
+              f"{elapsed:.1f}s" + (" | amp" if use_amp else ""), flush=True)
 
         if val["val_acc"] > best_val_acc:
             best_val_acc = val["val_acc"]
             best_epoch = epoch
+            no_improve = 0
             save_checkpoint(model, optimizer, epoch, row,
                             os.path.join(CKPT_DIR, "vvit_best.pt"),
                             extra={"run_name": run_name})
+        else:
+            no_improve += 1
+            if patience and no_improve >= patience:
+                stopped_early = True
+                print(f"early stop: no val_acc improvement for {patience} epochs "
+                      f"(best {best_val_acc:.4f} @ {best_epoch})", flush=True)
+                break
 
-    save_checkpoint(model, optimizer, epochs, row,
+    save_checkpoint(model, optimizer, epochs_run, row,
                     os.path.join(CKPT_DIR, "vvit_last.pt"),
                     extra={"run_name": run_name})
     if writer is not None:
@@ -172,20 +192,29 @@ def train(args) -> dict:
     metrics_f.close()
 
     summary = {"run_name": run_name, "best_epoch": best_epoch,
-               "best_val_acc": best_val_acc, **config}
+               "best_val_acc": best_val_acc, "epochs_run": epochs_run,
+               "stopped_early": stopped_early, **config}
     with open(os.path.join(METRICS_DIR, "train_summary.json"), "w") as f:
         json.dump(summary, f, indent=2)
-    print(f"\nBest val_acc {best_val_acc:.4f} @ epoch {best_epoch}. "
+    print(f"\nBest val_acc {best_val_acc:.4f} @ epoch {best_epoch} "
+          f"({epochs_run} epochs run"
+          f"{', early stopped' if stopped_early else ''}). "
           f"Checkpoints -> {CKPT_DIR}", flush=True)
     return summary
 
 
 def parse_args(argv=None):
-    p = argparse.ArgumentParser(description="Step 7d: full vViT training (200 epochs, best-val checkpoint)")
-    p.add_argument("--epochs", type=int, default=200)
+    p = argparse.ArgumentParser(description="Step 7d: vViT training (200-epoch budget, "
+                                            "early stopping, best-val checkpoint)")
+    p.add_argument("--epochs", type=int, default=200,
+                   help="max epochs (early stopping usually ends the run sooner)")
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--lr", type=float, default=1e-3,
                    help="Adam lr — paper does not specify; default 1e-3 (documented choice)")
+    p.add_argument("--patience", type=int, default=15,
+                   help="early-stop after N epochs without val_acc improvement (0=off)")
+    p.add_argument("--no-amp", action="store_true",
+                   help="disable CUDA autocast + GradScaler mixed precision")
     p.add_argument("--device", default="auto")
     p.add_argument("--num-workers", type=int, default=0)
     p.add_argument("--seed", type=int, default=42)
