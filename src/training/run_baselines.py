@@ -1,16 +1,24 @@
 """
 Step 8: Train & evaluate timm baselines under the Step 7d / 9a protocol
-========================================================================
+=======================================================================
 For each backbone in ``BASELINE_MODELS`` (vit / convnext / resnext):
 
-  train:  same splits, same train-only paper augmentations, same Adam
-          (build_paper_adam, lr default 1e-3), BCE with logits on the single
-          binary head, 200 epochs, best-val-accuracy checkpointing,
-          JSONL (+ TensorBoard when available) logging.
+  train:  same splits, same train-only paper augmentations, BCE with logits on
+          the single binary head, 200-epoch budget with early stopping,
+          best-val-accuracy checkpointing, JSONL (+ TensorBoard when
+          available) logging, CUDA autocast + GradScaler (AMP).
   eval:   load best-val checkpoint -> test split, image-level binary metrics
           with bootstrap 95% CI + patient-level aggregation (majority vote /
           mean prob) — mirrors run_evaluation.py so M4 DeLong/McNemar can
           compare against the vViT predictions directly.
+
+Protocol deviations vs Step 7d (documented for plan §6, diagnosed by
+``src/training/diagnose_baseline.py``):
+    * default lr 1e-4 (NOT 1e-3): at 1e-3 the pretrained backbones collapse
+      to a constant predictor within ~10 steps (feature collapse; train loss
+      pins at label entropy ln2). Head-only at 1e-3 and full finetune at
+      1e-4 both learn; from-scratch vViT is unaffected, hence its 1e-3.
+    * early stopping (patience on val accuracy) + AMP: laptop GPU budget.
 
 Outputs (git-ignored under results/):
     results/checkpoints/<tag>_best.pt / <tag>_last.pt
@@ -19,8 +27,9 @@ Outputs (git-ignored under results/):
     results/metrics/baseline_<tag>_test_predictions.csv
 
 Usage:
-    python src/training/run_baselines.py                       # all 3, 200 epochs
+    python src/training/run_baselines.py                       # all 3 models
     python src/training/run_baselines.py --models vit --smoke  # quick smoke
+    python src/training/run_baselines.py --eval-only           # test eval only
 """
 import argparse
 import json
@@ -48,18 +57,20 @@ from src.training.run_evaluation import POINT_KEYS
 
 
 @torch.no_grad()
-def evaluate(model, loader, device, max_batches=None):
+def evaluate(model, loader, device, max_batches=None, amp=True):
     """Mean val BCE + accuracy (sigmoid >= 0.5) over the loader."""
     model.eval()
     total_loss, total_correct, total_n = 0.0, 0, 0
+    use_amp = amp and device.type == "cuda"
     for bi, batch in enumerate(loader):
         if max_batches is not None and bi >= max_batches:
             break
         labels = batch["label"].to(device)
-        logits = model(batch_to_device(batch, device))
-        loss = F.binary_cross_entropy_with_logits(logits, labels)
+        with torch.autocast(device_type=device.type, enabled=use_amp):
+            logits = model(batch_to_device(batch, device))
+            loss = F.binary_cross_entropy_with_logits(logits, labels.float())
         total_loss += loss.item() * labels.shape[0]
-        total_correct += int(((logits >= 0).long() == labels.long()).sum().item())
+        total_correct += int(((logits.float() >= 0).long() == labels.long()).sum().item())
         total_n += labels.shape[0]
     if total_n == 0:
         return {"val_loss": float("nan"), "val_acc": float("nan")}
@@ -111,6 +122,10 @@ def train_one(tag, args, loaders) -> dict:
     epochs = args.epochs if not args.smoke else min(args.epochs, 2)
     train_cap = 10 if args.smoke else None   # smoke: cap batches/epoch (fast verify)
     val_cap = 5 if args.smoke else None
+    use_amp = (not args.no_amp) and device.type == "cuda"
+    scaler = torch.amp.GradScaler(enabled=use_amp)
+    patience = 0 if args.smoke else args.patience
+    no_improve, epochs_run, stopped_early = 0, 0, False
     row = {}
     for epoch in range(1, epochs + 1):
         model.train()
@@ -120,20 +135,25 @@ def train_one(tag, args, loaders) -> dict:
             if train_cap is not None and bi >= train_cap:
                 break
             labels = batch["label"].to(device)
-            logits = model(batch_to_device(batch, device))
+            with torch.autocast(device_type=device.type, enabled=use_amp):
+                logits = model(batch_to_device(batch, device))
+                loss = F.binary_cross_entropy_with_logits(logits, labels.float())
             optimizer.zero_grad(set_to_none=True)
-            loss = F.binary_cross_entropy_with_logits(logits, labels)
-            loss.backward()
-            optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             ep_loss += loss.item() * labels.shape[0]
             ep_n += labels.shape[0]
         train_loss = ep_loss / max(ep_n, 1)
+        epochs_run = epoch
 
-        val = evaluate(model, loaders["val"], device, max_batches=val_cap)
+        val = evaluate(model, loaders["val"], device, max_batches=val_cap,
+                       amp=use_amp)
         elapsed = time.time() - t0
         row = {"type": "epoch", "run": run_name, "epoch": epoch,
                "train_loss": train_loss, "val_loss": val["val_loss"],
-               "val_acc": val["val_acc"], "lr": args.lr, "sec": round(elapsed, 2)}
+               "val_acc": val["val_acc"], "lr": args.lr, "sec": round(elapsed, 2),
+               "amp": use_amp}
         metrics_f.write(json.dumps(row) + "\n")
         metrics_f.flush()
         if writer is not None:
@@ -142,16 +162,25 @@ def train_one(tag, args, loaders) -> dict:
             writer.add_scalar("acc/val", val["val_acc"], epoch)
         print(f"  [{tag}] epoch {epoch:3d}/{epochs} | train_loss {train_loss:.4f} | "
               f"val_loss {val['val_loss']:.4f} | val_acc {val['val_acc']:.4f} | "
-              f"{elapsed:.1f}s", flush=True)
+              f"{elapsed:.1f}s" + (" | amp" if use_amp else ""), flush=True)
 
         if val["val_acc"] > best_val_acc:
             best_val_acc = val["val_acc"]
             best_epoch = epoch
+            no_improve = 0
             save_checkpoint(model, optimizer, epoch, row,
                             os.path.join(CKPT_DIR, f"{tag}_best.pt"),
                             extra={"run_name": run_name})
+        else:
+            no_improve += 1
+            if patience and no_improve >= patience:
+                stopped_early = True
+                print(f"  [{tag}] early stop: no val_acc improvement for "
+                      f"{patience} epochs (best {best_val_acc:.4f} @ {best_epoch})",
+                      flush=True)
+                break
 
-    save_checkpoint(model, optimizer, epochs, row,
+    save_checkpoint(model, optimizer, epochs_run, row,
                     os.path.join(CKPT_DIR, f"{tag}_last.pt"),
                     extra={"run_name": run_name})
     if writer is not None:
@@ -159,7 +188,8 @@ def train_one(tag, args, loaders) -> dict:
     metrics_f.close()
 
     summary = {"run_name": run_name, "model_tag": tag,
-               "best_epoch": best_epoch, "best_val_acc": best_val_acc, **config}
+               "best_epoch": best_epoch, "best_val_acc": best_val_acc,
+               "epochs_run": epochs_run, "stopped_early": stopped_early, **config}
     with open(os.path.join(METRICS_DIR, f"baseline_{tag}_train_summary.json"), "w") as f:
         json.dump(summary, f, indent=2)
     print(f"  [{tag}] best val_acc {best_val_acc:.4f} @ epoch {best_epoch}", flush=True)
@@ -260,20 +290,31 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(description="Step 8: timm baselines, same protocol as Step 7d/9a")
     p.add_argument("--models", nargs="+", default=list(BASELINE_MODELS),
                    choices=list(BASELINE_MODELS))
-    p.add_argument("--epochs", type=int, default=200)
+    p.add_argument("--epochs", type=int, default=200,
+                   help="max epochs (early stopping usually ends the run sooner)")
     p.add_argument("--batch-size", type=int, default=32)
-    p.add_argument("--lr", type=float, default=1e-3,
-                   help="same default as run_training.py (documented choice)")
+    p.add_argument("--lr", type=float, default=1e-4,
+                   help="default 1e-4: at 1e-3 pretrained backbones collapse to a "
+                        "constant predictor (see src/training/diagnose_baseline.py); "
+                        "vViT trains from scratch and keeps 1e-3")
+    p.add_argument("--patience", type=int, default=15,
+                   help="early-stop after N epochs without val_acc improvement (0=off)")
+    p.add_argument("--no-amp", action="store_true",
+                   help="disable CUDA autocast + GradScaler mixed precision")
     p.add_argument("--scratch", action="store_true",
                    help="random init instead of ImageNet-pretrained (deviation toggle)")
     p.add_argument("--eval-only", action="store_true",
                    help="skip training, run test eval on existing *_best.pt")
+    p.add_argument("--skip-eval", action="store_true",
+                   help="train only; defer test eval to a later --eval-only run")
     p.add_argument("--n-boot", type=int, default=1000)
     p.add_argument("--device", default="auto")
-    p.add_argument("--num-workers", type=int, default=0)
+    p.add_argument("--num-workers", type=int, default=2,
+                   help="DataLoader workers; PIL augmentations are CPU-bound, "
+                        "0 serialises them with GPU (default 2)")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--smoke", action="store_true",
-                   help="2 epochs per model, no full test eval (CI sanity only)")
+                   help="2 epochs per model with capped batches; eval with n_boot=50")
     return p.parse_args(argv)
 
 
@@ -299,8 +340,13 @@ def main():
         summaries = {tag: train_one(tag, args, loaders) for tag in args.models}
         print("\nTraining summaries:", flush=True)
         for tag, s in summaries.items():
-            print(f"  {tag:8s}: best_val_acc {s['best_val_acc']:.4f} @ ep {s['best_epoch']}",
-                  flush=True)
+            print(f"  {tag:8s}: best_val_acc {s['best_val_acc']:.4f} @ ep "
+                  f"{s['best_epoch']} (ran {s['epochs_run']} epochs"
+                  f"{', early stop' if s['stopped_early'] else ''})", flush=True)
+    if args.skip_eval:
+        print("\n--skip-eval: test eval deferred (run with --eval-only later).",
+              flush=True)
+        return
     n_boot = 50 if args.smoke else args.n_boot
     for tag in args.models:
         eval_args = argparse.Namespace(**{**vars(args), "n_boot": n_boot})
