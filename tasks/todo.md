@@ -1,78 +1,156 @@
-# Task Checklist: vViT Renal Tumor Grade Classification (Integrated Plan)
+# Task Checklist: vViT Renal Tumor Grade Classification
 
-Authoritative plan: `tasks/plan.md` (integrates `references/plan.md`)
+Authoritative plan: `tasks/plan.md` (revised 2026-10-23).
+Single-owner checklist from 2026-10-23 onward: teammate split in `tasks/split.md` is **obsolete** and kept only as history.
 
-## M0: Data, Exploration & Literature ✅ COMPLETE
+Status legend: `[x]` done · `[~]` in progress / partial · `[ ]` pending · `[SUPERSEDED]` retained for history, not on the critical path.
 
-- [x] Task 1: Literature Review - Paper Collection
-- [x] Task 2: Literature Summary Table
-- [x] Task 3: 1-Page Paper Summary
-- [x] Task 4: Complete Dataset Download (300 cases + segmentations)
-- [x] Task 5: Data Exploration & Analysis
+---
+
+## M0: Data, Exploration & Literature — DONE
+
+- [x] Task 1: Literature review and paper collection
+- [x] Task 2: Literature summary table
+- [x] Task 3: 1-page paper summary
+- [x] Task 4: Dataset download (300 cases; 210 with segmentations + `kits.json`)
+- [x] Task 5: Data exploration and analysis
 - [x] Step 1: Pin `requirements.txt` (commit `76dfd30`)
 - [x] Step 1: Audit WHO/ISUP grade availability (commit `833b0d4`) — 172/210 labeled (low 119 / high 53), grades 1–4 only, all labeled cases have masks; GitHub mirror vs TCIA deviation documented in `docs/isup_grade_audit.md`
 
-## M1: Pilot Data Pipeline (Steps 2–6, ~20-patient subset)
+---
 
-> ✅ **Real data re-run 2026-09-23:** Steps 2–5 on `kits19/data/` (210 with segs) → split **train 48 / val 6 / test 12** patients (9467/1178/2230 slices). Radiomics **now real** — full PyRadiomics extraction executed 2026-09-23 in conda env `radiomics` (all 210 patients, 41,520 slices) with parallel workers + per-patient resume checkpoints; **top-16 re-selected train-only** by F-value and refrozen (all GLCM/GLDM/first-order texture — no shape features survived vs mock). Earlier 40-case mock pilot (8/2/3) superseded for real-data work.
+## M1: Fix cohort — real clinical fields, ~157–172 patients, new splits
 
-- [x] Step 2: Segmentation-guided 2D cropping (Fig. 1, 128×128 LANCZOS)
-- [x] Step 3: PyRadiomics extraction + top-16 F-value selection (train-only) — **real run complete 2026-09-23** (210 patients, 41,520 slices; `radiomics_all.csv` 105 features; frozen real `top16_features.json`; train-fit scaler `radiomics_scaler.pkl`)
-- [x] Step 4: Synthetic clinical fields (Table 1 prevalences, label-independent)
-- [x] Step 5: Exclusion criteria + stratified split → `splits.json` + seed
-- [x] Step 6: Sector-dict Dataset/DataLoader + paper augmentations (commit `190b20f`)
-- [x] **Checkpoint:** pipeline runs end-to-end on pilot subset ✅ (2026-09-22) — `splits.json` + pilot sector-dict DataLoader ready for handoff to B
+**Why:** the current `clinical.csv` uses synthetic comorbidity/habit values and the current `splits.json` keeps only 66 patients (balanced + mean±1 SD applied before splitting). The revised plan uses real `kits.json` fields and keeps the cohort near the paper's 157.
 
-## M2: vViT Sanity Check (Step 7)
+- [x] Rewrite `src/data/clinical.py` from `kits.json` real fields only:
+  - demographic: `age_at_nephrectomy`, `gender`, `body_mass_index`
+  - comorbidity: `peripheral_vascular_disease`; DM = `uncomplicated_diabetes_mellitus` OR `diabetes_mellitus_with_end_organ_damage`; `chronic_kidney_disease`
+  - habit: `smoking_history` (never / previous / current → 0/1/2), `alcohol_use` (actual 3 JSON levels → 0/1/2)
+  - z-score continuous fields with **train-only** statistics (implemented in the dataset)
+  - document DM definition and smoking/alcohol mapping (our assumptions; paper does not specify)
+- [x] Audit missing clinical fields — **0 missing** across all 8 model-facing fields in all 210 patients; no imputation needed. Noted 4 patients with age < 18 (`case_00031`, `case_00088`, `case_00160`, `case_00162`) as a source-data flag
+- [x] Retire `src/data/synthetic_clinical.py`; no `synthetic=True`/`bmi_synthetic` path remains
+- [x] Update `src/data/dataset.py` to consume the real `clinical.csv`; age/BMI z-scored with **train-split** mean/std inside each dataset instance; dataset self-test passed
+- [ ] Fix `src/data/dataset_split.py`:
+  - exclusion order per plan §3.2: missing clinical → missing ISUP → image count mean±1 SD → radiomics/mask failure
+  - **no patient equalisation before splitting**
+  - class balancing by image subsampling in **train only**
+  - patient-level stratified split targeting 111/15/30
+  - version `splits.json` + seed; produce runs for ≥3 seeds
+  - add 5-fold patient-level stratified CV folds (`cv_folds.json`)
+- [ ] Decide and document radiomics level: per-slice 2D crop vs per-whole-tumor 3D (plan §3.5); keep fixed
+- [ ] Re-run top-16 F-value selection **train-only, inside each fold/seed** after the new cohort/splits exist
+- [ ] **Checkpoint:** cohort and split counts logged; ~157–172 patients total; no patient/slice leakage; `splits.json` + `cv_folds.json` committed
 
-- [x] Step 7a: Sector tokenizers + class token + transformer encoder (+ per-sector heads) — `src/models/vvit.py` skeleton, dummy self-test passed
-- [x] Step 7b: Majority-voting fusion — `src/models/fusion_baseline_vote.py` (≥4/6 majority; class-token tie-break)
-- [x] Step 7c: BCE multi-sector loss + Adam (paper hyperparams) — `src/training/train.py`
-- [x] **Checkpoint:** model overfits a tiny subset ✅ (2026-09-23) — 16-slice subset, loss 0.52→0.0014 over 60 epochs; also verified on real kits19 batch (train 48 / val 6 / test 12; radiomics mock-mode)
+---
 
-## M3: Full Training (Steps 7–9) ✅ checkpoint produced (2026-09-23)
+## M2: Radiomics-only sanity gate
 
-- [x] Step 7d: Full 200-epoch training run, best-val checkpoint ✅ (2026-09-23) — `src/training/run_training.py` (best-val-acc checkpointing, TensorBoard + JSONL logging); first full run on real radiomics: **best val_acc 0.9277 @ epoch 67**, train loss →~0 by epoch ~15 (val loss rises steadily → overfit; small dataset, expected), checkpoints `results/checkpoints/vvit_best.pt` + `vvit_last.pt`
-- [x] Step 9a scaffolding: metrics + bootstrap CI + patient-level aggregation — `src/training/evaluation.py`
-- [x] Step 9a full run ✅ (2026-09-23) — `src/training/run_evaluation.py` on `vvit_best.pt` (ep 67), test 12 patients / 2,227 slices: **image-level acc 0.531 [95% CI 0.508–0.551], κ 0.061, AUROC 0.568; patient-level (6 low + 6 high) acc 0.500, AUROC 0.639**; per-head table in `results/metrics/test_metrics.json`. **⚠ Generalization gap:** val_acc 0.93 vs test ~0.53 — severe overfit on 48 train patients; val is balanced 3/3 so it's a lucky 6-patient checkpoint selection, not class skew. Mitigations to consider for M3/Step 8: earlier-stop sweep, smaller depth/embed, stronger aug, k-fold CV.
-- [x] **Checkpoint:** paper-style metrics table produced ✅ (2026-09-23) — `src/training/metrics_table.py` renders Table 2-equivalent (per-sector heads + majority-vote fusion, Acc/Sens/Spec/PPV/NPV/F1/κ/AUC with bootstrap 95% CI, image- and patient-level) → `results/metrics/table2_style.{md,csv}`; noted 12-patient test split vs paper's 30 (deviation, plan §6). Performance near chance — overfit finding stands; revisit training protocol before M5/M6.
-- [ ] vViT re-run under revised protocol (AMP + early stopping, patience 15) for Table 3 like-for-like comparison: `python src/training/run_training.py` → `run_evaluation.py` → `metrics_table.py` (the M3 numbers above are from the pre-revision run; re-run supersedes them)
+Run this before any neural training.
 
-## M4: Baselines & Statistical Tests (Steps 8–9)
+- [ ] Logistic regression and random forest on the 16 radiomic features
+- [ ] Patient-level 5-fold stratified CV; top-16 selection fit **inside each fold**
+- [ ] Report patient-level AUROC mean ± SD and pooled out-of-fold AUROC
+- [ ] **Gate:** if AUROC is near chance (~0.5–0.6), audit labels, radiomics extraction, and leakage before M4
+- [ ] **Checkpoint:** M0-equivalent gate results written to `results/metrics/`
 
-- [~] Step 8: timm ViT / ConvNeXt / ResNeXt (2D image-only) — **code + smoke (2026-09-23)**: `src/training/baselines.py` as `TimmBaseline` (`vit_small_patch16_224` / `convnext_small` / `resnext50_32x4d`, ImageNet-pretrained, `in_chans=1` stem fold, 128→224 resize — pretraining deviation documented); `src/training/run_baselines.py` mirrors Step 7d/9a protocol.
-- [x] Step 8 diagnosis + protocol fix (2026-10-08) — full runs had **pinned train loss at ln(2)**: lr 1e-3 collapses pretrained backbones to a constant predictor within ~10 steps (feature std/dim 1.09→0.005, rank 147→7/384; only bias learned). Fixed: baseline **lr 1e-4**, **AMP** (autocast+GradScaler), **early stopping** (patience 15 on val_acc), **num_workers 2**; probe `src/training/diagnose_baseline.py`, full writeup `docs/baseline_training_diagnosis.md`. Verified on real kits19: train_loss 0.676→0.533 over 3 epochs, val_acc 0.63 (was stuck 0.51), epoch 100s→57s.
-- [ ] **Full runs pending** (200-epoch budget, early stop ends sooner): `python src/training/run_baselines.py` — then Step 9b–c DeLong/McNemar table from the per-model `*_test_metrics.json`
-- [x] Step 9b: DeLong test (custom implementation) — `src/stats_tests.py`, self-test passed
-- [x] Step 9c: McNemar test — `src/training/evaluation.py::mcnemar_test` (statsmodels + fallback)
-- [ ] **Checkpoint:** DeLong/McNemar comparison table produced
+---
 
-## M5: Explainability (Step 10)
+## M3: Speed fix
 
-- [ ] Step 10: Permutation feature importance (100× per sector)
-- [ ] Step 10b: Mann–Whitney U pairwise + Fig. 5-style boxplots
-- [ ] Step 9d: Fig. 5-style ROC curves
-- [ ] **Checkpoint:** Fig. 4/5 equivalents reproduced
+Target: full vViT run in under ~1 h; a 37 h run means a bug.
 
-## M6: Improvement — Attention Fusion (Step 11)
+- [ ] Confirm `torch.cuda.is_available()` and that the active env is `cu126`
+- [ ] Time a DataLoader-only pass; time one forward/backward on one batch
+- [ ] Cache preprocessed crops as tensors/`.npy` instead of re-reading/augmenting from disk if loading dominates
+- [ ] Tune `num_workers` (Windows: 2–4, `persistent_workers=True`)
+- [ ] Confirm each epoch uses the balanced ~1.4k training crops, not all tumor slices
+- [ ] Confirm AMP is enabled and tensors are on GPU
+- [ ] **Checkpoint:** measured epoch time + projected full-run time recorded in `LOG.md`
 
-- [ ] Step 11a: `fusion_improved.py` — class-token head
-- [ ] Step 11b: Attention-weighted sector fusion
-- [ ] Step 11c: Attention vs permutation-importance ranking comparison
-- [ ] **Checkpoint:** voting vs class-token vs attention fusion results
+---
 
-## M7: Report (Step 12)
+## M4: vViT — paper-style split (≥3 seeds) + 5-fold CV
 
-- [ ] Step 12: Report draft (Intro → Methods → Results → Discussion → Improvement)
-- [ ] Declare all deviations (Section 6 of plan)
+- [ ] Fix attention block to the paper shape: inner dim 512 (8 heads × 64) projected back to 128; do not rely on `nn.TransformerEncoder`
+- [ ] Training protocol: BCE per head averaged over batch × heads; Adam (β 0.9/0.999, ε 1e-8, wd 0, no AMSGrad), lr 1e-3; AMP; early stopping patience 15 on val accuracy; best-val checkpoint
+- [ ] Image-sector-only augmentation: h-flip, v-flip, perspective, invert, posterize, solarize, equalize
+- [ ] Run paper-style split for ≥3 seeds; run 5-fold patient-level CV
+- [ ] Patient-level metrics primary: mean slice probability for AUROC, majority vote for labels; bootstrap CIs resampling **patients** (~1000)
+- [ ] Image-level metrics secondary only, explicitly labelled as inflated by within-patient correlation
+- [ ] Report accuracy, sensitivity, specificity, PPV, NPV, F-score, log loss, Cohen's κ, AUROC
+- [ ] **Checkpoint:** patient-level results table + CIs for all seeds/folds; run configs saved
+
+---
+
+## M5: Permutation importance + figures
+
+- [ ] Baseline accuracy of the trained model on the test split
+- [ ] Per sector: shuffle patient sector values across patients (other sectors intact); recompute accuracy; repeat 100×
+- [ ] Importance = drop in accuracy; pairwise Mann–Whitney U between sectors
+- [ ] Boxplots + ROC figure (Fig. 4/5 equivalents)
+- [ ] Compare with paper: radiomic dominant (~0.30 image-level, 0.154 patient-level); image sector near zero/negative
+- [ ] **Checkpoint:** importance table + figures + comparison note
+
+---
+
+## M6: Optional — one image-only baseline
+
+Only if time allows; not required for the core result.
+
+- [x] `TimmBaseline` code (`vit_small_patch16_224` / `convnext_small` / `resnext50_32x4d`) with `in_chans=1` stem fold, 128→224 resize
+- [x] Baseline non-learning diagnosis and fix (lr 1e-4, AMP, early stopping patience 15, `num_workers=2`) — `docs/baseline_training_diagnosis.md`
+- [ ] Run **one** pretrained baseline (ResNet18 or ConvNeXt-tiny), lr 1e-4, paper-style split only
+- [ ] DeLong / McNemar comparison only if this baseline is trained
+- [ ] Do not run the full ViT/ConvNeXt/ResNeXt trio or CV on CNN baselines unless time allows
+- [ ] **Checkpoint (optional):** baseline vs vViT comparison table
+
+---
+
+## M7: Demo
+
+- [ ] `demo.py` on a test-split case: load CT + mask + `kits.json`, crop slices, compute radiomics with the frozen top-16 list and train z-score stats, build clinical vector, run vViT
+- [ ] Print per-sector votes, final vote, and P(high grade) per slice and per patient
+- [ ] State the input requirement (image crop + mask + clinical record; raw CT alone is insufficient) and present as research illustration, not diagnostic
+
+---
+
+## M8: Report
+
+- [ ] Draft: Intro → Methods → Results → Discussion → Limitations
+- [ ] Declare every deviation from the paper (plan §9), including:
+  - Python/PyTorch versions vs 3.8/1.7.1
+  - cohort/split counts vs 157 → 111/15/30
+  - DM definition and alcohol-level mapping
+  - radiomics per slice vs per tumor
+  - loss aggregation, lr, 3–3 vote tie-break
+  - early stopping + AMP vs fixed 200 epochs fp32
+  - train-only class balancing; test keeps true prevalence
+  - patient-level CV in addition to the single split
+  - baseline pretraining status and lr
+  - GitHub KiTS19 mirror vs TCIA C4KC-KiTS
+- [ ] One-page README with the pipeline diagram from plan §2
 - [ ] **Checkpoint:** final writeup complete
 
 ---
 
+## Superseded work (kept for history)
+
+- [SUPERSEDED] Old M1 pilot: 40-case mock run (8/2/3) and 210-case real run with 48/6/12 patients (9,467/1,178/2,230 slices). Replaced by the revised cohort in M1.
+- [SUPERSEDED] Old M2 sanity check: 16-slice overfit (loss 0.52→0.0014); vViT integration on 48/6/12 batch — architecture still valid, data/split replaced.
+- [SUPERSEDED] Old M3 training: 200 epochs on 48/6/12, best val_acc 0.9277 @ epoch 67, test image acc 0.531 / patient acc 0.500, AUROC 0.639. Severe overfit; numbers are **not** final and must not be reported as the project result. Artifacts remain in `results/` for reference.
+- [SUPERSEDED] Old M4 three-baseline suite/code remains usable, but only one baseline is now in scope (M6).
+- [SUPERSEDED] Old M6 attention-fusion improvement: moved out of scope (plan §11); revisit only after M1–M8.
+- [SUPERSEDED] `tasks/split.md` teammate ownership — single owner from 2026-10-23.
+
+---
+
 ## Notes
-- **Superseded work:** old Tasks 6–15 (3D CNN / early-fusion pipeline) are replaced by the integrated plan — see mapping table in `tasks/plan.md` §8.
-- **Reusable code:** SimpleITK I/O, kits.json loading, metrics, trainer/baseline skeletons — disposition table in `tasks/plan.md` §1.
-- **Current status:** M0–M3 complete (2026-09-22/23) — vViT trained 200 epochs on real split (48/6/12 patients; 9455/1176/2227 slices), best val_acc 0.9277 @ ep67, but **test acc ~0.53 (chance) — severe overfitting/generalization gap documented in M3 above**. **M4 diagnosis + protocol fix 2026-10-08:** baselines had been pinned at chance by lr-1e-3 pretrained feature collapse (see M4 / `docs/baseline_training_diagnosis.md`); runners now use baseline lr 1e-4 + AMP + early stopping (patience 15). **Next:** full baseline runs (`python src/training/run_baselines.py`), vViT protocol-parity re-run, then DeLong/McNemar table.
-- **Dataset:** Real `kits19/data/` present (210 cases with segmentation + kits.json; cases 00210–00299 imaging-only). Steps 2–5 re-run 2026-09-23 → `splits.json` + **real** `top16_features.json` (PyRadiomics on all 210 cases; see M1 note).
-- **Radiomics env:** pyradiomics 3.1.0 in Miniconda env `radiomics` (`%USERPROFILE%\miniconda3\envs\radiomics\python.exe`; Python 3.9, numpy 1.26.4 — no cp314 wheels for pyradiomics). Full run: that python + `src/data/radiomics_extraction.py --splits data/processed/splits.json --workers 7` (~50 min; per-patient resume checkpoints in `data/processed/radiomics_parts/`). `normalize=True` + binWidth=25 gives ~0.4 s/slice (~20× vs raw).
-- **Environment:** torch 2.14.0+**cu126** + torchvision 0.29.0+cu126 (manual wheels from cu126 index; cu128 lacks 2.14.0 for py3.14). `torch.cuda.is_available()=True` on RTX 3050 Laptop 6GB.
+
+- **Artifact status:** `data/processed/clinical.csv` is now **real** (210 patients; 172 labeled; no missing model-facing fields). Current `data/processed/splits.json` is still the old 66-patient split (train 48 / val 6 / test 12), produced with pre-split equalisation and mean±1 SD; it must be regenerated next in M1. Current `top16_features.json` was selected on the old split and must be re-fitted train-only per fold/seed.
+- **Dataset:** real `kits19/data/` present (210 cases with segmentation + `kits.json`; cases 00210–00299 imaging-only).
+- **Radiomics env:** pyradiomics 3.1.0 in Miniconda env `radiomics` (`%USERPROFILE%\miniconda3\envs\radiomics\python.exe`; Python 3.9, numpy 1.26.4). Full run: that python + `src/data/radiomics_extraction.py --splits data/processed/splits.json --workers 7` (~50 min; resume checkpoints in `data/processed/radiomics_parts/`). `normalize=True` + binWidth=25 gives ~0.4 s/slice.
+- **Training env:** torch 2.14.0+cu126, torchvision 0.29.0+cu126; `torch.cuda.is_available()=True` on RTX 3050 Laptop 6GB.
+- **Docs:** dated run results and debugging history go in `LOG.md`, not here.
+- **Git hygiene:** small focused commits; no data in the repo.
