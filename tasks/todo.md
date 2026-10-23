@@ -40,7 +40,7 @@ Status legend: `[x]` done · `[~]` in progress / partial · `[ ]` pending · `[S
   - version `splits.json` + seed; produce runs for ≥3 seeds
   - add 5-fold patient-level stratified CV folds (`cv_folds.json`)
 - [x] Decide and document radiomics level: per-slice 2D crop (chosen)
-- [ ] Re-run top-16 F-value selection **train-only, inside each fold/seed** after the new cohort/splits exist
+- [x] Re-run top-16 F-value selection **train-only, inside each fold/seed** after the new cohort/splits exist
 - [x] **Checkpoint:** cohort and split counts logged; ~157–172 patients total; no patient/slice leakage; `splits.json` + `cv_folds.json` committed
 
 ---
@@ -52,7 +52,7 @@ Run this before any neural training.
 - [x] Logistic regression and random forest on the 16 radiomic features
 - [x] Patient-level 5-fold stratified CV; top-16 selection fit **inside each fold**
 - [x] Report patient-level AUROC mean ± SD and pooled out-of-fold AUROC
-- [ ] **Gate:** if AUROC is near chance (~0.5–0.6), audit labels, radiomics extraction, and leakage before M4
+- [x] **Gate:** if AUROC is near chance (~0.5–0.6), audit labels, radiomics extraction, and leakage before M4
 - [ ] **Checkpoint:** M0-equivalent gate results written to `results/metrics/`
 
 ---
