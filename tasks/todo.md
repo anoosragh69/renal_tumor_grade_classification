@@ -49,7 +49,7 @@ Status legend: `[x]` done · `[~]` in progress / partial · `[ ]` pending · `[S
 
 Run this before any neural training.
 
-- [ ] Logistic regression and random forest on the 16 radiomic features
+- [x] Logistic regression and random forest on the 16 radiomic features
 - [ ] Patient-level 5-fold stratified CV; top-16 selection fit **inside each fold**
 - [ ] Report patient-level AUROC mean ± SD and pooled out-of-fold AUROC
 - [ ] **Gate:** if AUROC is near chance (~0.5–0.6), audit labels, radiomics extraction, and leakage before M4
