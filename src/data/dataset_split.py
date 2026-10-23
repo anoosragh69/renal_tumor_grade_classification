@@ -261,6 +261,59 @@ def main():
         "excluded_ids": exclusion_log,
     }
 
+    # Write splits.json
+    out_path = os.path.join(paths["processed"], "splits.json")
+    with open(out_path, "w") as f:
+        json.dump(output, f, indent=2)
+    log.info("Saved splits.json → %s", out_path)
+    log.info(
+        "Split counts: train=%d, val=%d, test=%d",
+        output["counts"]["train"], output["counts"]["val"], output["counts"]["test"],
+    )
+    log.info("Exclusion summary: %s", output["excluded"])
+    log.info("Step 5 complete.")
+
+    # ------------------------------------------------------------------
+    # Generate 5‑fold patient‑level stratified CV folds (M1 requirement)
+    # ------------------------------------------------------------------
+    from sklearn.model_selection import StratifiedKFold
+    cv_folds = {}
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=args.seed)
+    patient_ids = df["patient_id"].tolist()
+    patient_labels = df["label"].tolist()
+    for fold_idx, (train_idx, val_idx) in enumerate(skf.split(patient_ids, patient_labels)):
+        cv_folds[f"fold_{fold_idx}"] = {
+            "train": [patient_ids[i] for i in train_idx],
+            "val":   [patient_ids[i] for i in val_idx],
+        }
+    cv_path = os.path.join(paths["processed"], "cv_folds.json")
+    with open(cv_path, "w") as f:
+        json.dump(cv_folds, f, indent=2)
+    log.info("Saved cv_folds.json → %s", cv_path)
+
+    label_map = dict(zip(df["patient_id"], df["label"]))
+    output = {
+        "seed":     args.seed,
+        "train":    splits["train"],
+        "val":      splits["val"],
+        "test":     splits["test"],
+        "counts": {
+            "train": len(splits["train"]),
+            "val":   len(splits["val"]),
+            "test":  len(splits["test"]),
+            "total": len(splits["train"]) + len(splits["val"]) + len(splits["test"]),
+        },
+        "label_distribution": {
+            split: {
+                "low":  sum(1 for p in ids if label_map.get(p) == 0),
+                "high": sum(1 for p in ids if label_map.get(p) == 1),
+            }
+            for split, ids in [("train", splits["train"]), ("val", splits["val"]), ("test", splits["test"])]
+        },
+        "excluded": {k: len(v) for k, v in exclusion_log.items()},
+        "excluded_ids": exclusion_log,
+    }
+
     out_path = os.path.join(paths["processed"], "splits.json")
     with open(out_path, "w") as f:
         json.dump(output, f, indent=2)
