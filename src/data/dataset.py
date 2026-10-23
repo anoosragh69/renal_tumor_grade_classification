@@ -83,6 +83,7 @@ def get_paths(root=REPO_ROOT):
         "radiomics": os.path.join(processed, "radiomics_top16.csv"),
         "top16":     os.path.join(processed, "top16_features.json"),
         "interim":   os.path.join(root, "data", "interim"),
+        "cache":     os.path.join(processed, "crops_cache"),
     }
 
 
@@ -169,7 +170,15 @@ class RenalTumorSectorDataset(Dataset):
         demo, comorb, habit, label = self.clinical[pid]
 
         # Image sector — float [0,1] crop from Step 2 (HU window −400..400)
-        img = np.load(os.path.join(self.paths["interim"], pid, f"slice_{slice_idx:04d}.npy"))
+        # Image sector — float [0,1] crop from Step 2 (HU window −400..400) with caching
+        img_path = os.path.join(self.paths["interim"], pid, f"slice_{slice_idx:04d}.npy")
+        cache_path = os.path.join(self.paths["cache"], f"{pid}_{slice_idx:04d}.npy")
+        if os.path.exists(cache_path):
+            img = np.load(cache_path)
+        else:
+            img = np.load(img_path)
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            np.save(cache_path, img)
         img = img.astype(np.float32)
 
         if self.transform is not None:
