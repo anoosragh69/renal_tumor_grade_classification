@@ -6,9 +6,9 @@ Rewrite of the old Task 11 (3D tuple) dataset for the vViT multi-sector pipeline
 Sector-dict sample (model-facing keys match plan §4 Step 6):
 
     {
-      "demographic": FloatTensor(3),        # age, sex, bmi   (z-scored by Step 4)
-      "comorbidity": FloatTensor(3),        # pvd, dm, ckd    (synthetic, label-independent)
-      "habit":       FloatTensor(2),        # smoking, alcohol(synthetic, label-independent)
+      "demographic": FloatTensor(3),        # age, sex, bmi   (age/bmi z-scored, train stats)
+      "comorbidity": FloatTensor(3),        # pvd, dm, ckd    (real kits.json fields)
+      "habit":       FloatTensor(2),        # smoking, alcohol(real kits.json fields)
       "radiomic":    FloatTensor(16),       # frozen top-16, train-fit z-scored (Step 3)
       "image":       FloatTensor(1,128,128),# HU-windowed, [0,1]; model flattens to 16384
       "label":       FloatTensor(()),       # 0=low (ISUP 1-2), 1=high (ISUP 3-4); float for BCE
@@ -60,8 +60,19 @@ META_KEYS = ("patient_id", "slice_idx")
 LABEL_KEY = "label"
 
 DEMOGRAPHIC_COLS = ["age", "sex", "bmi"]
+DEMOGRAPHIC_CONTINUOUS = ["age", "bmi"]
 COMORBIDITY_COLS = ["pvd", "dm", "ckd"]
 HABIT_COLS = ["smoking", "alcohol"]
+
+
+def fit_train_scaler(clinical, train_ids):
+    """Fit age/BMI mean/std on train patients only (plan §3.4 leakage rule)."""
+    train = clinical[clinical["patient_id"].isin(train_ids)]
+    if train.empty:
+        raise ValueError("No train patients in clinical.csv — cannot fit demographic scaler")
+    mean = train[DEMOGRAPHIC_CONTINUOUS].mean()
+    std = train[DEMOGRAPHIC_CONTINUOUS].std(ddof=0).replace(0, 1.0)
+    return mean, std
 
 
 def get_paths(root=REPO_ROOT):
@@ -109,6 +120,9 @@ class RenalTumorSectorDataset(Dataset):
 
         # ── Clinical sectors + labels (Step 4) ────────────────────────────────
         clinical = pd.read_csv(paths["clinical"])
+        self.demo_mean, self.demo_std = fit_train_scaler(clinical, set(splits.get("train", [])))
+        for col in DEMOGRAPHIC_CONTINUOUS:
+            clinical[col] = (clinical[col] - self.demo_mean[col]) / self.demo_std[col]
         clinical = clinical[clinical["patient_id"].isin(self.patient_ids)]
         missing = self.patient_ids - set(clinical["patient_id"])
         if missing:
@@ -229,6 +243,13 @@ def _self_test():
         assert batch[k].dtype == torch.float32 or k == "slice_idx", f"{k} dtype {batch[k].dtype}"
     assert len(batch["patient_id"]) == B
     print(f"Batch schema OK: { {k: tuple(v.shape) for k, v in batch.items() if k != 'patient_id'} }")
+
+    # ── Demographic scaler was fit on train patients only ─────────────────────
+    train_demo = np.stack([v[0] for v in train.dataset.clinical.values()])
+    train_age_bmi = train_demo[:, [0, 2]]
+    assert np.allclose(train_age_bmi.mean(axis=0), 0.0, atol=1e-5), \
+        f"Train age/bmi not centered: {train_age_bmi.mean(axis=0)}"
+    print("Train-fit demographic scaling OK (age/bmi train mean = 0)")
 
     # ── Augmentation: train images should differ from source crops; range OK ──
     ds_tr = train.dataset
