@@ -141,7 +141,12 @@ class RenalTumorSectorDataset(Dataset):
 
         # ── Radiomic vectors (frozen top-16 order, Step 3) ────────────────────
         with open(paths["top16"]) as f:
-            self.top16 = json.load(f)
+            self.top16 = json.load(f)  # e.g., {"fold_0": ["feat1", ...], ...}
+            # Choose a concrete list of features (first fold) for dataset indexing
+  # e.g., {"fold_0": ["feat1", ...], ...}
+
+
+
         radiomics = pd.read_csv(paths["radiomics"])
         radiomics = radiomics[radiomics["patient_id"].isin(self.patient_ids)]
         self.radiomics = {
