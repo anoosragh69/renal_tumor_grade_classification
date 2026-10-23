@@ -232,7 +232,7 @@ def main():
         splits = {"train": df["patient_id"].tolist(), "val": [], "test": []}
     else:
         # Equalise class image counts (plan §5.5)
-        df = equalise_class_image_counts(df, rng)
+        # NOTE: Per updated plan, do NOT equalise class image counts before splitting. Class balancing will be applied later in training.
 
         # Stratified split
         splits = stratified_split(df, args.val_frac, args.test_frac, args.seed)

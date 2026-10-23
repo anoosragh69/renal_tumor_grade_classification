@@ -32,7 +32,7 @@ Status legend: `[x]` done · `[~]` in progress / partial · `[ ]` pending · `[S
 - [x] Audit missing clinical fields — **0 missing** across all 8 model-facing fields in all 210 patients; no imputation needed. Noted 4 patients with age < 18 (`case_00031`, `case_00088`, `case_00160`, `case_00162`) as a source-data flag
 - [x] Retire `src/data/synthetic_clinical.py`; no `synthetic=True`/`bmi_synthetic` path remains
 - [x] Update `src/data/dataset.py` to consume the real `clinical.csv`; age/BMI z-scored with **train-split** mean/std inside each dataset instance; dataset self-test passed
-- [ ] Fix `src/data/dataset_split.py`:
+- [x] Fix `src/data/dataset_split.py`:
   - exclusion order per plan §3.2: missing clinical → missing ISUP → image count mean±1 SD → radiomics/mask failure
   - **no patient equalisation before splitting**
   - class balancing by image subsampling in **train only**
