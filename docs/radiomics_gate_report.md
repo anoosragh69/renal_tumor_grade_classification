@@ -39,3 +39,10 @@ expected. See `tasks/todo.md` -> Discrepancies.
 - Fold 2: original_firstorder_Energy, original_firstorder_Maximum, original_firstorder_TotalEnergy, original_glcm_Contrast, original_glcm_DifferenceAverage, original_glcm_Id, original_glcm_Idm, original_glcm_Idmn, original_glcm_Idn, original_glcm_InverseVariance, original_gldm_DependenceNonUniformityNormalized, original_glrlm_GrayLevelNonUniformity, original_glrlm_HighGrayLevelRunEmphasis, original_glrlm_LowGrayLevelRunEmphasis, original_glrlm_RunLengthNonUniformity, original_glszm_SizeZoneNonUniformity
 - Fold 3: original_firstorder_Maximum, original_firstorder_Median, original_glcm_Autocorrelation, original_glcm_ClusterShade, original_glcm_JointAverage, original_glcm_MaximumProbability, original_glcm_SumAverage, original_gldm_GrayLevelNonUniformity, original_gldm_HighGrayLevelEmphasis, original_gldm_LargeDependenceHighGrayLevelEmphasis, original_gldm_LowGrayLevelEmphasis, original_glrlm_HighGrayLevelRunEmphasis, original_glrlm_LowGrayLevelRunEmphasis, original_glrlm_RunLengthNonUniformity, original_ngtdm_Busyness, original_ngtdm_Contrast
 - Fold 4: original_shape2D_Perimeter, original_firstorder_Maximum, original_glcm_Autocorrelation, original_glcm_JointAverage, original_glcm_MaximumProbability, original_glcm_SumAverage, original_gldm_HighGrayLevelEmphasis, original_gldm_LargeDependenceHighGrayLevelEmphasis, original_gldm_LargeDependenceLowGrayLevelEmphasis, original_gldm_LowGrayLevelEmphasis, original_glrlm_HighGrayLevelRunEmphasis, original_glrlm_LowGrayLevelRunEmphasis, original_glszm_SizeZoneNonUniformity, original_glszm_SmallAreaEmphasis, original_glszm_SmallAreaLowGrayLevelEmphasis, original_ngtdm_Busyness
+
+## 95% CI (bootstrap over 126 patients, 1000 resamples)
+
+| Model | AUROC | 95% CI |
+|---|---|---|
+| Logistic regression | 0.534 | 0.407-0.648 |
+| Random forest | 0.580 | 0.459-0.695 |
