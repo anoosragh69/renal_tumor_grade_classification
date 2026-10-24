@@ -52,17 +52,17 @@ Run this before any neural training.
 
 - [x] Logistic regression and random forest on the 16 radiomic features
 - [x] 5-fold patient-level CV; top-16 selection fit **inside each fold**
-- [x] Report AUROC mean ± SD and pooled out-of-fold AUROC — `results/metrics/radiomics_gate_auroc_summary.json`
-- [x] **Gate decision: FAIL.** LR AUROC **0.510 ± 0.046**, RF AUROC **0.540 ± 0.016** — both near chance. The paper reports radiomics as the dominant signal, so this is a red flag. **Do not train M4 until the Discrepancies section below is resolved.**
-- [ ] **Checkpoint:** human-readable gate report written (`docs/radiomics_gate_report.md` and `docs/radiomics_gate_auroc_report.md` are currently empty 0-byte files)
-- [ ] Re-run the gate at **patient level** (mean slice probability per patient) — the current script scores per-slice, which plan §M2 did not ask for
+- [x] Report patient-level AUROC mean ± SD and pooled out-of-fold AUROC (rerun 2026-10-24)
+- [x] **Gate decision: FAIL.** Pooled patient-level AUROC **LR 0.534 / RF 0.580** (n=126); per-fold LR mean 0.530 ± 0.075, RF mean 0.600 ± 0.026. Accuracy is meaningless here: RF 0.762 vs **majority-class baseline 0.754** (95 low / 31 high). Both models sit in the plan's near-chance band, while the paper reports the radiomic sector as dominant — **audit before training M4**.
+- [x] **Checkpoint:** gate results written to `results/metrics/radiomics_gate_*.json` and `docs/radiomics_gate_report.md`
+- [x] Re-run at **patient level** (mean slice probability per patient) — done 2026-10-24, superseding the per-slice scoring
 
 ---
 
 ## Discrepancies found 2026-10-24 (audit before M3/M4)
 
 - [ ] **Cohort is 126, not ~157.** `splits.json` keeps 91/12/23 (126 total) because `slice_count_outlier` excludes **46** patients; the paper excludes **15**. Root cause: our "image count" is the number of *tumor-containing* slices (mean 198.0, SD 34.9 over 210 patients), a very wide distribution that mean±1 SD guts. The paper almost certainly counted CT-series slices, not tumor slices. Decide: relax/replace the outlier rule, or declare 126 as our cohort in §9.
-- [ ] **M2 gate near chance (0.510 / 0.540).** Plan §M2 says to audit labels, radiomics extraction and leakage before M4. Candidates: per-slice radiomics are noisy for a per-patient task; class imbalance (119 low / 53 high); the F-test may need per-patient aggregation first.
+- [ ] **M2 gate near chance (LR 0.534 / RF 0.580 patient-level, n=126).** Plan §M2 says to audit labels, radiomics extraction and leakage before M4. Candidates: per-slice radiomics are noisy for a per-patient task; class imbalance (95 low / 31 high in cohort); per-tumor (3D) aggregation instead of per-slice; LR/RF may be the wrong read and the paper's own radiomics lead could depend on its 157-patient cohort.
 - [ ] **Baseline runs look incomplete.** `baseline_*_test_metrics.json` all report `checkpoint_epoch: 2` and `n_slices: 320` — these are not the 200-epoch early-stopped runs the checklist describes.
 - [ ] **vViT attention still does not match the paper.** `src/models/vvit.py` uses `nn.TransformerEncoder` with 8 heads / dim 128 → head_dim 16; the plan (§M4) requires inner dim 512 (8×64) projected back to 128 via a custom block. Not yet done.
 
