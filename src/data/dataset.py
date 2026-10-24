@@ -75,6 +75,28 @@ def fit_train_scaler(clinical, train_ids):
     return mean, std
 
 
+def load_top16(raw):
+    """
+    Return the frozen top-16 feature list from top16_features.json.
+
+    Accepts either a flat list (train-only selection for the paper-style split)
+    or a dict carrying a "paper_split" / "features" entry. Per-fold selection
+    for CV lives in top16_features_folds.json and is not used here.
+    """
+    if isinstance(raw, list):
+        features = raw
+    elif isinstance(raw, dict):
+        features = raw.get("paper_split") or raw.get("features")
+    else:
+        features = None
+    if not features or len(features) != 16:
+        raise ValueError(
+            "top16_features.json must hold a 16-item list (or a dict with "
+            "'paper_split'/'features'); re-run src/data/top16_selection.py"
+        )
+    return list(features)
+
+
 def get_paths(root=REPO_ROOT):
     processed = os.path.join(root, "data", "processed")
     return {
@@ -139,15 +161,16 @@ class RenalTumorSectorDataset(Dataset):
             for pid, row in clinical.iterrows()
         }
 
-        # ── Radiomic vectors (frozen top-16 order, Step 3) ────────────────────
+        # ── Radiomic vectors (frozen train-only top-16, plan §3.4) ────────────
         with open(paths["top16"]) as f:
-            self.top16 = json.load(f)  # e.g., {"fold_0": ["feat1", ...], ...}
-            # Choose a concrete list of features (first fold) for dataset indexing
-  # e.g., {"fold_0": ["feat1", ...], ...}
-
-
-
+            self.top16 = load_top16(json.load(f))
         radiomics = pd.read_csv(paths["radiomics"])
+        missing_features = [c for c in self.top16 if c not in radiomics.columns]
+        if missing_features:
+            raise ValueError(
+                f"{paths['radiomics']} is missing selected features {missing_features}; "
+                "re-run src/data/top16_selection.py"
+            )
         radiomics = radiomics[radiomics["patient_id"].isin(self.patient_ids)]
         self.radiomics = {
             (r["patient_id"], int(r["slice_idx"])): r[self.top16].to_numpy(dtype=np.float32)
