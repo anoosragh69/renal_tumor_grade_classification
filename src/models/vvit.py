@@ -5,13 +5,14 @@ Architecture (paper hyperparams):
   - sector tokenizers: linear projection per sector -> shared embed dim 128
   - class token: learnable embedding prepended to the sector sequence
   - sequence: [cls, demographic, comorbidity, habit, radiomic, image] -> (B, 6, 128)
-  - pre-norm transformer encoder: depth 8, heads 8, MLP dim 32
+  - pre-norm transformer encoder: depth 8, heads 8 x head_dim 64 (inner dim 512,
+    projected back to embed 128), MLP dim 32
   - per-sector heads: each of the 6 output tokens -> own linear binary head
   - output: (B, 6) sector logits (BCE applied jointly in Step 7c)
 
-head_dim note: embed 128 / 8 heads = head_dim 16 under standard MHA.
-The plan's "head dim 64" is incompatible with embed/heads; we prioritize
-embed/heads/depth and document head_dim 16 as a report deviation.
+head_dim: the plan specifies heads 8 / head_dim 64, i.e. an inner attention
+dimension of 512 projected back to embed_dim 128. nn.TransformerEncoder cannot
+do that (it ties head_dim = d_model / nheads), so a custom block is used.
 
 Usage:
     python src/models/vvit.py            # dummy-tensor self-test
@@ -24,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from src.data.dataset import SECTOR_DIMS, SECTOR_KEYS, IMAGE_SHAPE
 from src.models.sectors import SectorTokenizer, PerSectorHead
@@ -31,6 +33,63 @@ from src.models.sectors import SectorTokenizer, PerSectorHead
 # Shared sequence order: class token first, then the 5 data sectors (plan §4 Step 7.3)
 TOKEN_ORDER = ("class",) + SECTOR_KEYS  # ("class", "demographic", ..., "image")
 NUM_TOKENS = len(TOKEN_ORDER)           # 6
+
+
+class PaperAttention(nn.Module):
+    """Self-attention with an inner dimension independent of embed_dim.
+
+    q/k/v are projected embed_dim -> num_heads * head_dim (512 by default),
+    attention runs with head_dim 64, and the result is projected back to
+    embed_dim (128). This is the shape the plan requires and what
+    nn.TransformerEncoder cannot express.
+    """
+
+    def __init__(self, embed_dim: int, num_heads: int, head_dim: int, dropout: float = 0.0):
+        super().__init__()
+        inner = num_heads * head_dim
+        self.num_heads = num_heads
+        self.head_dim = head_dim
+        self.inner_dim = inner
+        self.qkv = nn.Linear(embed_dim, 3 * inner, bias=False)
+        self.proj = nn.Linear(inner, embed_dim, bias=False)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, L, _ = x.shape
+        q, k, v = self.qkv(x).chunk(3, dim=-1)
+
+        def heads(t):
+            return t.view(B, L, self.num_heads, self.head_dim).transpose(1, 2)
+
+        q, k, v = heads(q), heads(k), heads(v)
+        out = F.scaled_dot_product_attention(
+            q, k, v,
+            dropout_p=self.dropout.p if self.training else 0.0,
+        )
+        out = out.transpose(1, 2).contiguous().view(B, L, self.inner_dim)
+        return self.dropout(self.proj(out))
+
+
+class EncoderBlock(nn.Module):
+    """Pre-norm block: x + attn(norm1(x)); x + mlp(norm2(x))."""
+
+    def __init__(self, embed_dim: int, num_heads: int, head_dim: int,
+                 mlp_dim: int, dropout: float = 0.0):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(embed_dim)
+        self.attn = PaperAttention(embed_dim, num_heads, head_dim, dropout)
+        self.norm2 = nn.LayerNorm(embed_dim)
+        self.mlp = nn.Sequential(
+            nn.Linear(embed_dim, mlp_dim),
+            nn.GELU(),
+            nn.Linear(mlp_dim, embed_dim),
+        )
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x + self.dropout(self.attn(self.norm1(x)))
+        x = x + self.dropout(self.mlp(self.norm2(x)))
+        return x
 
 
 class VViT(nn.Module):
@@ -42,6 +101,7 @@ class VViT(nn.Module):
         embed_dim: int = 128,
         depth: int = 8,
         num_heads: int = 8,
+        head_dim: int = 64,
         mlp_dim: int = 32,
         dropout: float = 0.0,
     ):
@@ -52,6 +112,7 @@ class VViT(nn.Module):
         self.embed_dim = embed_dim
         self.depth = depth
         self.num_heads = num_heads
+        self.head_dim = head_dim
         self.mlp_dim = mlp_dim
         self.token_order = TOKEN_ORDER
 
@@ -65,17 +126,11 @@ class VViT(nn.Module):
             for key in SECTOR_KEYS
         })
 
-        # Pre-norm transformer encoder (plan §4 Step 7.4)
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=embed_dim,
-            nhead=num_heads,
-            dim_feedforward=mlp_dim,
-            dropout=dropout,
-            activation="gelu",
-            batch_first=True,
-            norm_first=True,          # pre-norm
-        )
-        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=depth)
+        # Pre-norm transformer encoder (plan §4 Step 7.4): inner dim 512 = 8 x 64
+        self.encoder = nn.ModuleList([
+            EncoderBlock(embed_dim, num_heads, head_dim, mlp_dim, dropout)
+            for _ in range(depth)
+        ])
         self.encoder_norm = nn.LayerNorm(embed_dim)
 
         # Per-sector binary heads (plan §4 Step 7.5) — one per token incl. class
@@ -112,7 +167,8 @@ class VViT(nn.Module):
                  order = [class, demographic, comorbidity, habit, radiomic, image]
         """
         x = self._tokenize(batch)                 # (B, 6, 128)
-        x = self.encoder(x)                       # (B, 6, 128)
+        for block in self.encoder:
+            x = block(x)                          # (B, 6, 128)
         x = self.encoder_norm(x)
         logits = torch.stack(
             [self.heads[tok](x[:, i]) for i, tok in enumerate(self.token_order)],
@@ -195,13 +251,21 @@ def _self_test():
     assert torch.equal(a, b), "eval forward not deterministic"
     print("Eval determinism OK")
 
+    # ── Paper attention shape: inner dim 512 = 8 x 64, projected to 128 ──────
+    block = model.encoder[0]
+    assert block.attn.num_heads == 8 and block.attn.head_dim == 64
+    assert block.attn.inner_dim == 512, f"inner dim {block.attn.inner_dim} != 512"
+    assert block.attn.qkv.out_features == 3 * 512
+    assert block.attn.proj.in_features == 512 and block.attn.proj.out_features == 128
+    print(f"Attention shape OK: 8 heads x 64 -> inner {block.attn.inner_dim} "
+          f"-> projected to {model.embed_dim}")
+
     # ── Param count ──────────────────────────────────────────────────────────
     n_params = sum(p.numel() for p in model.parameters())
     n_train = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Parameters: {n_params:,} total ({n_train:,} trainable)")
-    print(f"Encoder: depth={model.depth} heads={model.num_heads} "
-          f"embed={model.embed_dim} mlp={model.mlp_dim} "
-          f"(head_dim={model.embed_dim // model.num_heads})")
+    print(f"Encoder: depth={model.depth} heads={model.num_heads} x head_dim={model.head_dim} "
+          f"(inner {model.num_heads * model.head_dim}) embed={model.embed_dim} mlp={model.mlp_dim}")
     print("\nvViT self-test PASSED.")
 
 
