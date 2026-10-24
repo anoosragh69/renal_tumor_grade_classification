@@ -50,9 +50,30 @@ Superseded checkpoints from the old 48/6/12 split were renamed to
 - Loader verified on the 126-patient split: train 91 / val 12 / test 23 patients,
   17,774 / 2,354 / 4,409 slices.
 
-### Cohort observation (open)
+### Cohort observation (open, analysis added 2026-10-24)
 
 `splits.json` keeps 126 patients because `slice_count_outlier` excludes 46, where the paper
-excludes 15. Our slice count is *tumor-containing* slices (mean 198.0 ± 34.9 over 210
-patients), not CT-series slices, so mean ± 1 SD is far more aggressive. Unresolved — decide
-before presenting cohort numbers.
+excludes 15. Three readings of "image count" were tested on the 172 labeled patients:
+
+| Interpretation | Excluded | Kept |
+|---|---|---|
+| Tumor-containing slices (mask > 0, current) | 46 | 126 |
+| Tumor-containing slices with mask >= 256 px | 46 | 126 |
+| CT-series slices (`imaging.nii.gz` z size, mean 513.7 +/- 21.6) | 1 (`case_00160`) | 171 |
+
+Band detail for the tumor-slice reading: mean 175.9 +/- 34.5, 22 patients above the upper
+bound and 24 below the lower; log-space 1 SD also excludes 46; median +/- 3 robust SD
+excludes 4. **No reading reproduces the paper's 15**, so the choice is declarative, not a
+recovery of the paper's exact rule. Counts are genuine (tumors span ~166-216 axial slices;
+verified against `segmentation.nii.gz` for sampled cases). Unresolved — pending decision.
+
+### vViT attention block replaced (M4 step 1)
+
+- `nn.TransformerEncoder` cannot express heads 8 x head_dim 64 with embed 128 (it ties
+  head_dim = d_model / nheads = 16), so this had been a declared deviation.
+- New `PaperAttention`: q/k/v 128 -> 512, attention with 8 heads x 64, projection 512 -> 128;
+  `EncoderBlock` keeps the pre-norm residual form and GELU MLP of dim 32.
+- Self-test passes; parameters 4.27M; steady-state epoch 35.2 s (was 32.8 s); epoch-1
+  train_loss 0.2416 (was 0.2604), deterministic across repeat runs.
+- Checkpoints from the timing run were superseded by this one.
+

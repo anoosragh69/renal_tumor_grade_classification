@@ -84,7 +84,7 @@ Target: full vViT run in under ~1 h; a 37 h run means a bug.
 
 ## M4: vViT — paper-style split (≥3 seeds) + 5-fold CV
 
-- [ ] Fix attention block to the paper shape: inner dim 512 (8 heads × 64) projected back to 128; do not rely on `nn.TransformerEncoder`
+- [x] Fix attention block to the paper shape: inner dim 512 (8 heads × 64) projected back to 128 — done 2026-10-24, `PaperAttention` + `EncoderBlock` in `src/models/vvit.py` (self-test asserts shape; 4.27M params; epoch 32.8 → 35.2 s)
 - [ ] Training protocol: BCE per head averaged over batch × heads; Adam (β 0.9/0.999, ε 1e-8, wd 0, no AMSGrad), lr 1e-3; AMP; early stopping patience 15 on val accuracy; best-val checkpoint
 - [ ] Image-sector-only augmentation: h-flip, v-flip, perspective, invert, posterize, solarize, equalize
 - [ ] Run paper-style split for ≥3 seeds; run 5-fold patient-level CV
