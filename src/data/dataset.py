@@ -250,6 +250,8 @@ def get_dataloaders(batch_size=8, num_workers=0, augment=True, seed=42, root=REP
             num_workers=num_workers,
             generator=gen,
             drop_last=False,
+            # workers respawn every epoch otherwise, which costs several seconds on Windows
+            persistent_workers=(num_workers > 0),
         )
     return loaders
 
