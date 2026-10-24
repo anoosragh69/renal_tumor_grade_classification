@@ -74,11 +74,11 @@ Target: full vViT run in under ~1 h; a 37 h run means a bug.
 
 - [x] Confirm `torch.cuda.is_available()` and that the active env is `cu126` — `src/data/check_gpu.py` (RTX 3050, CUDA 12.6)
 - [x] Cache preprocessed crops as `.npy` — `data/processed/crops_cache/`, wired into `dataset.py`
-- [ ] Time a DataLoader-only pass; time one forward/backward on one batch
-- [ ] Tune `num_workers` (Windows: 2–4, `persistent_workers=True`)
-- [ ] Confirm each epoch uses the balanced training crops, not all tumor slices (**note:** current loader yields all 17,774 train crops; plan expects a subsampled balanced ~1.4k)
-- [ ] Confirm AMP is enabled and tensors are on GPU
-- [ ] **Checkpoint:** measured epoch time + projected full-run time recorded in `LOG.md`
+- [x] Time a DataLoader-only pass; time one forward/backward on one batch — **2026-10-24:** steady-state epoch **35.7 s** (16 s load + 18 s fwd/bwd at 32 ms/batch + 1.4 s val); cold cache 167.3 s one-time. See `LOG.md`
+- [x] Tune `num_workers` (Windows) — `num_workers=2` + `persistent_workers=True`: 1,169 slices/s vs 417 slices/s at `num_workers=0`
+- [ ] Confirm each epoch uses the balanced training crops, not all tumor slices (**open:** loader still yields all 17,774 train crops; plan expects a subsampled balanced ~1.4k — decide with the cohort question)
+- [x] Confirm AMP is enabled and tensors are on GPU — run reports `device: cuda`, `| amp`
+- [x] **Checkpoint:** measured epoch time + projected full-run time recorded in `LOG.md` — steady-state **32.8 s/epoch** → 200 epochs ≈ 1.8 h, early stopping expected far sooner (plan §6 "≲1 h" target reachable)
 
 ---
 
