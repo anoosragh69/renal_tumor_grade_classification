@@ -30,6 +30,8 @@ import pandas as pd
 import numpy as np
 from sklearn.feature_selection import SelectKBest, f_classif
 from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, roc_auc_score
 
@@ -77,8 +79,12 @@ def select_top_k_features(X_train: pd.DataFrame, y_train: np.ndarray, k: int = 1
 
 
 def train_and_evaluate(X_train, y_train, X_val, y_val):
-    # Logistic Regression
-    lr = LogisticRegression(max_iter=1000, class_weight="balanced", n_jobs=-1, solver="lbfgs")
+    # Logistic Regression (features are z-scored inside the fold; radiomic
+    # features have wildly different scales, and lbfgs fails to converge otherwise)
+    lr = Pipeline([
+        ("scale", StandardScaler()),
+        ("clf", LogisticRegression(max_iter=2000, class_weight="balanced", solver="lbfgs")),
+    ])
     lr.fit(X_train, y_train)
     lr_pred = lr.predict(X_val)
     lr_proba = lr.predict_proba(X_val)[:, 1]
@@ -93,10 +99,24 @@ def train_and_evaluate(X_train, y_train, X_val, y_val):
     rf_acc = accuracy_score(y_val, rf_pred)
     rf_auc = roc_auc_score(y_val, rf_proba)
 
-    return {
+    metrics = {
         "logistic_regression": {"accuracy": lr_acc, "auroc": lr_auc},
         "random_forest": {"accuracy": rf_acc, "auroc": rf_auc},
     }
+    probas = {"logistic_regression": lr_proba, "random_forest": rf_proba}
+    return metrics, probas
+
+
+def to_patient_level(patient_ids, y, proba):
+    """
+    Aggregate slice-level probabilities to one row per patient (plan 5.2:
+    mean slice probability for AUROC, majority vote for the class label).
+
+    Returns (labels, mean_probabilities, sorted patient order).
+    """
+    frame = pd.DataFrame({"patient_id": patient_ids, "y": y, "p": proba})
+    agg = frame.groupby("patient_id", sort=True).agg(y=("y", "first"), p=("p", "mean"))
+    return agg["y"].to_numpy(), agg["p"].to_numpy()
 
 
 def main():
@@ -107,6 +127,7 @@ def main():
     os.makedirs(results_dir, exist_ok=True)
 
     all_metrics = []
+    oof = {"logistic_regression": {"y": [], "p": []}, "random_forest": {"y": [], "p": []}}
     for i, fold in enumerate(folds):
         train_patients = set(fold["train"])  # type: ignore[index]
         val_patients = set(fold["val"])      # type: ignore[index]
@@ -124,21 +145,135 @@ def main():
         X_train = X_train_full[selected_features]
         X_val = X_val_full[selected_features]
 
-        metrics = train_and_evaluate(X_train, y_train, X_val, y_val)
+        metrics, probas = train_and_evaluate(X_train, y_train, X_val, y_val)
         metrics["selected_features"] = list(selected_features)
         metrics["fold"] = i
+
+        # Patient-level evaluation (primary, plan 5.2)
+        patient_ids = val_df["patient_id"].to_numpy()
+        patient_metrics = {}
+        for model, proba in probas.items():
+            y_p, p_p = to_patient_level(patient_ids, y_val, proba)
+            patient_metrics[model] = {
+                "accuracy": float(accuracy_score(y_p, (p_p >= 0.5).astype(int))),
+                "auroc": float(roc_auc_score(y_p, p_p)),
+                "n_patients": int(len(y_p)),
+            }
+            oof[model]["y"].extend(y_p.tolist())
+            oof[model]["p"].extend(p_p.tolist())
+        metrics["patient"] = patient_metrics
         all_metrics.append(metrics)
 
         fold_path = results_dir / f"radiomics_gate_fold_{i}.json"
         with open(fold_path, "w") as f:
             json.dump(metrics, f, indent=2)
-        print(f"Fold {i} results written to {fold_path}")
+        print(
+            f"Fold {i}: slice AUROC LR {metrics['logistic_regression']['auroc']:.3f} / "
+            f"RF {metrics['random_forest']['auroc']:.3f} | "
+            f"patient AUROC LR {patient_metrics['logistic_regression']['auroc']:.3f} / "
+            f"RF {patient_metrics['random_forest']['auroc']:.3f} "
+            f"({patient_metrics['logistic_regression']['n_patients']} patients)"
+        )
 
-    summary = {"num_folds": len(folds), "per_fold": all_metrics}
+    # Pooled out-of-fold over every patient (each patient is in exactly one val fold)
+    pooled = {}
+    for model in ("logistic_regression", "random_forest"):
+        y = np.asarray(oof[model]["y"])
+        p = np.asarray(oof[model]["p"])
+        pooled[model] = {
+            "auroc": float(roc_auc_score(y, p)),
+            "accuracy": float(accuracy_score(y, (p >= 0.5).astype(int))),
+            "n_patients": int(len(y)),
+        }
+
+    summary = {"num_folds": len(folds), "per_fold": all_metrics, "pooled_patient": pooled}
+    y_all = np.asarray(oof["logistic_regression"]["y"])
+    summary["majority_class_baseline"] = {
+        "accuracy": float(max(np.mean(y_all == 0), np.mean(y_all == 1))),
+        "n_patients": int(len(y_all)),
+        "low": int(np.sum(y_all == 0)),
+        "high": int(np.sum(y_all == 1)),
+    }
     summary_path = results_dir / "radiomics_gate_summary.json"
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2)
     print(f"Aggregated summary written to {summary_path}")
+    for model, m in pooled.items():
+        print(f"Pooled patient-level {model}: AUROC {m['auroc']:.3f}, acc {m['accuracy']:.3f}, n={m['n_patients']}")
+    base = summary["majority_class_baseline"]
+    print(f"Majority-class baseline accuracy: {base['accuracy']:.3f} "
+          f"({base['low']} low / {base['high']} high of {base['n_patients']} patients)")
+
+    write_report(summary)
+
+
+def write_report(summary):
+    """Human-readable gate report (M2 checkpoint)."""
+    docs_dir = Path(__file__).resolve().parents[2] / "docs"
+    docs_dir.mkdir(exist_ok=True)
+    folds = summary["per_fold"]
+    lines = [
+        "# Radiomics-only sanity gate (M2)",
+        "",
+        "Logistic regression and random forest on the train-only top-16 radiomic features,",
+        "5-fold patient-level stratified CV over the M1 cohort. Top-16 selection (ANOVA",
+        "F-value) is fit on each fold's training patients only.",
+        "",
+        "## Patient-level results (primary, mean slice probability per patient)",
+        "",
+        "| Model | Pooled AUROC | Pooled accuracy | n patients |",
+        "|---|---|---|---|",
+    ]
+    for model, m in summary["pooled_patient"].items():
+        name = "Logistic regression" if model == "logistic_regression" else "Random forest"
+        lines.append(f"| {name} | {m['auroc']:.3f} | {m['accuracy']:.3f} | {m['n_patients']} |")
+    base = summary.get("majority_class_baseline", {})
+    if base:
+        lines.append(
+            f"| Majority-class baseline | 0.500 | {base['accuracy']:.3f} | {base['n_patients']} "
+            f"({base['low']} low / {base['high']} high) |"
+        )
+    lr = [f["patient"]["logistic_regression"]["auroc"] for f in folds]
+    rf = [f["patient"]["random_forest"]["auroc"] for f in folds]
+    lines += [
+        "",
+        f"- LR AUROC across folds: mean {np.mean(lr):.3f} +/- {np.std(lr):.3f} (min {min(lr):.3f}, max {max(lr):.3f})",
+        f"- RF AUROC across folds: mean {np.mean(rf):.3f} +/- {np.std(rf):.3f} (min {min(rf):.3f}, max {max(rf):.3f})",
+        "",
+        "## Slice-level results (secondary, inflated by within-patient correlation)",
+        "",
+        "| Model | Mean slice AUROC | Mean slice accuracy |",
+        "|---|---|---|",
+    ]
+    for model in ("logistic_regression", "random_forest"):
+        aucs = [f[model]["auroc"] for f in folds]
+        accs = [f[model]["accuracy"] for f in folds]
+        name = "Logistic regression" if model == "logistic_regression" else "Random forest"
+        lines.append(f"| {name} | {np.mean(aucs):.3f} +/- {np.std(aucs):.3f} | {np.mean(accs):.3f} |")
+    lines += [
+        "",
+        "## Gate decision",
+        "",
+        f"Pooled patient-level AUROC: LR {summary['pooled_patient']['logistic_regression']['auroc']:.3f}, "
+        f"RF {summary['pooled_patient']['random_forest']['auroc']:.3f}. "
+        "The plan sets the gate at patient-level AUROC near chance (~0.5-0.6), meaning",
+        "labels, extraction or leakage must be audited before any neural model is trained.",
+        "Accuracy must be read against the majority-class baseline, which is the value a",
+        "constant 'low grade' predictor would already achieve.",
+        "The paper reports the radiomic sector as the dominant signal (about 0.30",
+        "image-level and 0.154 patient-level permutation importance), so some signal was",
+        "expected. See `tasks/todo.md` -> Discrepancies.",
+        "",
+        "## Per-fold top-16 features",
+        "",
+    ]
+    for f in folds:
+        lines.append(f"- Fold {f['fold']}: {', '.join(f['selected_features'])}")
+    report = "\n".join(lines) + "\n"
+    out = docs_dir / "radiomics_gate_report.md"
+    out.write_text(report, encoding="utf-8")
+    (docs_dir / "radiomics_gate_auroc_report.md").write_text(report, encoding="utf-8")
+    print(f"Report written to {out}")
 
 if __name__ == "__main__":
     main()
