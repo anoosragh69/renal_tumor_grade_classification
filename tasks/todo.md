@@ -41,7 +41,8 @@ Status legend: `[x]` done · `[~]` in progress / partial · `[ ]` pending · `[S
   - add 5-fold patient-level stratified CV folds (`cv_folds.json`)
 - [x] Decide and document radiomics level: per-slice 2D crop (chosen)
 - [x] Re-run top-16 F-value selection **train-only, inside each fold/seed** after the new cohort/splits exist
-- [x] **Checkpoint:** cohort and split counts logged; ~157–172 patients total; no patient/slice leakage; `splits.json` + `cv_folds.json` committed
+- [x] Reconcile top-16 artifact with the dataset (2026-10-24) — `top16_features.json` had become a per-fold dict and crashed `dataset.py`; now `top16_selection.py` writes the frozen paper-split list to `top16_features.json`, per-fold lists to `top16_features_folds.json`, and regenerates `radiomics_top16.csv` to match. Loader verified: train 91 / val 12 / test 23 patients, 17,774 / 2,354 / 4,409 slices
+- [ ] **Checkpoint:** cohort and split counts logged; no patient/slice leakage; `splits.json` + `cv_folds.json` committed — **open: cohort is 126, not ~157; see Discrepancies below**
 
 ---
 
@@ -50,10 +51,20 @@ Status legend: `[x]` done · `[~]` in progress / partial · `[ ]` pending · `[S
 Run this before any neural training.
 
 - [x] Logistic regression and random forest on the 16 radiomic features
-- [x] Patient-level 5-fold stratified CV; top-16 selection fit **inside each fold**
-- [x] Report patient-level AUROC mean ± SD and pooled out-of-fold AUROC
-- [x] **Gate:** if AUROC is near chance (~0.5–0.6), audit labels, radiomics extraction, and leakage before M4
-- [ ] **Checkpoint:** M0-equivalent gate results written to `results/metrics/`
+- [x] 5-fold patient-level CV; top-16 selection fit **inside each fold**
+- [x] Report AUROC mean ± SD and pooled out-of-fold AUROC — `results/metrics/radiomics_gate_auroc_summary.json`
+- [x] **Gate decision: FAIL.** LR AUROC **0.510 ± 0.046**, RF AUROC **0.540 ± 0.016** — both near chance. The paper reports radiomics as the dominant signal, so this is a red flag. **Do not train M4 until the Discrepancies section below is resolved.**
+- [ ] **Checkpoint:** human-readable gate report written (`docs/radiomics_gate_report.md` and `docs/radiomics_gate_auroc_report.md` are currently empty 0-byte files)
+- [ ] Re-run the gate at **patient level** (mean slice probability per patient) — the current script scores per-slice, which plan §M2 did not ask for
+
+---
+
+## Discrepancies found 2026-10-24 (audit before M3/M4)
+
+- [ ] **Cohort is 126, not ~157.** `splits.json` keeps 91/12/23 (126 total) because `slice_count_outlier` excludes **46** patients; the paper excludes **15**. Root cause: our "image count" is the number of *tumor-containing* slices (mean 198.0, SD 34.9 over 210 patients), a very wide distribution that mean±1 SD guts. The paper almost certainly counted CT-series slices, not tumor slices. Decide: relax/replace the outlier rule, or declare 126 as our cohort in §9.
+- [ ] **M2 gate near chance (0.510 / 0.540).** Plan §M2 says to audit labels, radiomics extraction and leakage before M4. Candidates: per-slice radiomics are noisy for a per-patient task; class imbalance (119 low / 53 high); the F-test may need per-patient aggregation first.
+- [ ] **Baseline runs look incomplete.** `baseline_*_test_metrics.json` all report `checkpoint_epoch: 2` and `n_slices: 320` — these are not the 200-epoch early-stopped runs the checklist describes.
+- [ ] **vViT attention still does not match the paper.** `src/models/vvit.py` uses `nn.TransformerEncoder` with 8 heads / dim 128 → head_dim 16; the plan (§M4) requires inner dim 512 (8×64) projected back to 128 via a custom block. Not yet done.
 
 ---
 
@@ -61,11 +72,11 @@ Run this before any neural training.
 
 Target: full vViT run in under ~1 h; a 37 h run means a bug.
 
-- [ ] Confirm `torch.cuda.is_available()` and that the active env is `cu126`
+- [x] Confirm `torch.cuda.is_available()` and that the active env is `cu126` — `src/data/check_gpu.py` (RTX 3050, CUDA 12.6)
+- [x] Cache preprocessed crops as `.npy` — `data/processed/crops_cache/`, wired into `dataset.py`
 - [ ] Time a DataLoader-only pass; time one forward/backward on one batch
-- [ ] Cache preprocessed crops as tensors/`.npy` instead of re-reading/augmenting from disk if loading dominates
 - [ ] Tune `num_workers` (Windows: 2–4, `persistent_workers=True`)
-- [ ] Confirm each epoch uses the balanced ~1.4k training crops, not all tumor slices
+- [ ] Confirm each epoch uses the balanced training crops, not all tumor slices (**note:** current loader yields all 17,774 train crops; plan expects a subsampled balanced ~1.4k)
 - [ ] Confirm AMP is enabled and tensors are on GPU
 - [ ] **Checkpoint:** measured epoch time + projected full-run time recorded in `LOG.md`
 
