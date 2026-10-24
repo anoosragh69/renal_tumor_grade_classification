@@ -1,49 +1,74 @@
-'''Top‑16 radiomic feature selection per CV fold (train‑only)'''
+"""Top-16 radiomic feature selection (train-only, plan section 3.4).
+
+Produces three artifacts:
+  data/processed/top16_features.json       -- flat 16-feature list for the
+                                              paper-style splits.json train split
+                                              (frozen; dataset reads this)
+  data/processed/top16_features_folds.json -- per-fold lists for 5-fold CV
+  data/processed/radiomics_top16.csv       -- radiomics_all.csv reduced to the
+                                              paper-split 16 features (dataset input)
+
+Selection uses ANOVA F-value (SelectKBest / f_classif) fit on training data only.
+"""
 
 import json
 from pathlib import Path
+
 import pandas as pd
 from sklearn.feature_selection import SelectKBest, f_classif
 
-def load_radiomics() -> pd.DataFrame:
-    csv_path = Path(__file__).resolve().parents[2] / 'data' / 'processed' / 'radiomics_all.csv'
-    return pd.read_csv(csv_path)
+K = 16
+PROCESSED = Path(__file__).resolve().parents[2] / "data" / "processed"
+META_COLS = {"patient_id", "slice_idx", "label"}
 
-def load_folds() -> list:
-    folds_path = Path(__file__).resolve().parents[2] / 'data' / 'processed' / 'cv_folds.json'
-    with open(folds_path, 'r') as f:
-        folds_dict = json.load(f)
-    # sort to keep order
-    return [value for _, value in sorted(folds_dict.items(), key=lambda kv: kv[0])]
 
-def select_top_k(X, y, k=16):
+def feature_columns(df):
+    return [c for c in df.columns if c not in META_COLS]
+
+
+def select_top_k(X, y, k=K):
     selector = SelectKBest(score_func=f_classif, k=k)
     selector.fit(X, y)
-    mask = selector.get_support()
-    return list(X.columns[mask])
+    return list(X.columns[selector.get_support()])
+
 
 def main():
-    df = load_radiomics()
-    folds = load_folds()
-    feature_cols = [c for c in df.columns if c not in {'patient_id', 'slice_idx', 'label'}]
-    per_fold = {}
-    union_features = set()
-    for i, fold in enumerate(folds):
-        train_patients = set(fold['train'])
-        train_df = df[df['patient_id'].isin(train_patients)]
-        y = train_df['label'].values
-        X = train_df[feature_cols]
-        selected = select_top_k(X, y, k=16)
-        per_fold[f'fold_{i}'] = selected
-        union_features.update(selected)
-        print(f'Fold {i}: selected {len(selected)} features')
-    result = per_fold.copy()
-    result['union'] = list(sorted(union_features))
-    out_path = Path(__file__).resolve().parents[2] / 'data' / 'processed' / 'top16_features.json'
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_path, 'w') as f:
-        json.dump(result, f, indent=2)
-    print(f'Saved top-16 selection to {out_path}')
+    df = pd.read_csv(PROCESSED / "radiomics_all.csv")
+    cols = feature_columns(df)
 
-if __name__ == '__main__':
+    with open(PROCESSED / "splits.json") as f:
+        splits = json.load(f)
+    with open(PROCESSED / "cv_folds.json") as f:
+        folds_dict = json.load(f)
+    folds = [v for _, v in sorted(folds_dict.items(), key=lambda kv: kv[0])]
+
+    # Paper-style split: select on the train patients only, freeze for val/test.
+    train_df = df[df["patient_id"].isin(set(splits["train"]))]
+    paper_selected = select_top_k(train_df[cols], train_df["label"].values)
+    with open(PROCESSED / "top16_features.json", "w") as f:
+        json.dump(paper_selected, f, indent=2)
+
+    # 5-fold CV: one train-only selection per fold.
+    per_fold = {}
+    union = set()
+    for i, fold in enumerate(folds):
+        fold_train = df[df["patient_id"].isin(set(fold["train"]))]
+        selected = select_top_k(fold_train[cols], fold_train["label"].values)
+        per_fold[f"fold_{i}"] = selected
+        union.update(selected)
+    with open(PROCESSED / "top16_features_folds.json", "w") as f:
+        json.dump({"folds": per_fold, "union": sorted(union)}, f, indent=2)
+
+    # Dataset input: radiomics_all reduced to the paper-split selection.
+    keep = ["patient_id", "slice_idx", "label"] + paper_selected
+    df[keep].to_csv(PROCESSED / "radiomics_top16.csv", index=False)
+
+    print(f"paper-split top-16 -> top16_features.json ({len(paper_selected)} features)")
+    for feat in paper_selected:
+        print(f"  {feat}")
+    print(f"per-fold top-16  -> top16_features_folds.json (union {len(union)} features)")
+    print(f"radiomics_top16.csv -> {len(keep)} columns")
+
+
+if __name__ == "__main__":
     main()
