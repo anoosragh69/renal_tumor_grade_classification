@@ -10,6 +10,13 @@ Plan: `tasks/plan.md`. Checklist: `tasks/todo.md`. Only dated, factual notes liv
 - Generated the per-repeat CSV, summary JSON (including pairwise Mann–Whitney tests), importance boxplots, and ROC figure under git-ignored `results/`. P-values are exploratory because repeats use one model and the same 31 patients, and comparisons are unadjusted for multiplicity. Full interpretation: `docs/vvit_permutation_importance_2026-10-25.md`.
 - Runtime: approximately 230 seconds for 500 perturbations. The active Python 3.14 user environment required `matplotlib==3.11.2` (already pinned by `requirements.txt`); no dependency file changed.
 
+## 2026-10-25 — paired vViT and image-baseline comparison
+
+- Added `src/training/compare_vvit_baselines.py`; it checks patient IDs and labels before comparing shared seed-42 predictions using patient majority-vote labels, mean slice-probability AUROC, paired DeLong, and exact McNemar.
+- n=31 paired patients. vViT vs ViT: AUROC 0.611 vs 0.732 (DeLong p=0.574), accuracy 0.774 vs 0.806 (McNemar p=1.000). vs ConvNeXt: AUROC 0.611 vs 0.657 (p=0.831), accuracy 0.774 vs 0.710 (p=0.688). vs ResNeXt: AUROC 0.611 vs 0.722 (p=0.586), accuracy 0.774 vs 0.645 (p=0.424).
+- None of the paired comparisons is statistically significant. With 31 patients, this is inconclusive rather than evidence of equivalence; p-values are exploratory and unadjusted across comparisons. Slice-level DeLong was omitted because slices within patients are correlated. See `docs/vvit_baseline_comparison_2026-10-25.md`.
+- Results: `results/metrics/vvit_baseline_comparisons_seed42.{json,csv}` (generated and git-ignored).
+
 ---
 
 ## 2026-10-25

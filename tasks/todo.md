@@ -119,9 +119,9 @@ Only if time allows; not required for the core result.
 - [x] `TimmBaseline` code (`vit_small_patch16_224` / `convnext_small` / `resnext50_32x4d`) with `in_chans=1` stem fold, 128→224 resize
 - [x] Baseline non-learning diagnosis and fix (lr 1e-4, AMP, early stopping patience 15, `num_workers=2`) — `docs/baseline_training_diagnosis.md`
 - [x] Run pretrained image baselines — the full ViT, ConvNeXt, and ResNeXt suite completed on the paper-style seed-42 split (2026-10-25; broader than the planned single baseline)
-- [ ] DeLong / McNemar comparison of vViT and image baselines after vViT test predictions are available
+- [x] DeLong / exact McNemar comparison of vViT and image baselines on the shared patient-level test set; exploratory low-power results documented in `docs/vvit_baseline_comparison_2026-10-25.md`
 - [x] No additional baseline training planned; the full ViT/ConvNeXt/ResNeXt suite has already run. No CNN baseline CV planned.
-- [ ] **Checkpoint (optional):** baseline vs vViT comparison table
+- [x] **Checkpoint (optional):** baseline vs vViT comparison table
 
 ---
 
