@@ -97,13 +97,20 @@ def load_top16(raw):
     return list(features)
 
 
-def get_paths(root=REPO_ROOT):
+def get_paths(root=REPO_ROOT, splits_file=None, top16_file=None, radiomics_file=None):
+    """Resolve the default artifacts, allowing isolated split-specific inputs."""
     processed = os.path.join(root, "data", "processed")
+    def resolve(override, default):
+        if override is None:
+            return default
+        path = os.fspath(override)
+        return os.path.abspath(path if os.path.isabs(path) else os.path.join(root, path))
+
     return {
-        "splits":    os.path.join(processed, "splits.json"),
+        "splits":    resolve(splits_file, os.path.join(processed, "splits.json")),
         "clinical":  os.path.join(processed, "clinical.csv"),
-        "radiomics": os.path.join(processed, "radiomics_top16.csv"),
-        "top16":     os.path.join(processed, "top16_features.json"),
+        "radiomics": resolve(radiomics_file, os.path.join(processed, "radiomics_top16.csv")),
+        "top16":     resolve(top16_file, os.path.join(processed, "top16_features.json")),
         "interim":   os.path.join(root, "data", "interim"),
         "cache":     os.path.join(processed, "crops_cache"),
     }
@@ -126,7 +133,7 @@ class RenalTumorSectorDataset(Dataset):
     """Sector-dict dataset over one split (train / val / test)."""
 
     def __init__(self, split="train", augment=None, paths=None, root=REPO_ROOT,
-                 balance=None, balance_seed=42):
+                 balance=None, balance_seed=42, preprocessing=None):
         if paths is None:
             paths = get_paths(root)
         self.split = split
@@ -147,7 +154,21 @@ class RenalTumorSectorDataset(Dataset):
 
         # ── Clinical sectors + labels (Step 4) ────────────────────────────────
         clinical = pd.read_csv(paths["clinical"])
-        self.demo_mean, self.demo_std = fit_train_scaler(clinical, set(splits.get("train", [])))
+        if preprocessing and "demographic_mean" in preprocessing:
+            self.demo_mean = pd.Series(preprocessing["demographic_mean"]).reindex(
+                DEMOGRAPHIC_CONTINUOUS
+            )
+            self.demo_std = pd.Series(preprocessing["demographic_std"]).reindex(
+                DEMOGRAPHIC_CONTINUOUS
+            )
+        else:
+            self.demo_mean, self.demo_std = fit_train_scaler(
+                clinical, set(splits.get("train", []))
+            )
+        if (not np.isfinite(self.demo_mean.to_numpy(dtype=np.float64)).all()
+                or not np.isfinite(self.demo_std.to_numpy(dtype=np.float64)).all()
+                or (self.demo_std <= 0).any()):
+            raise ValueError("Demographic scaler values must be finite with positive standard deviations")
         for col in DEMOGRAPHIC_CONTINUOUS:
             clinical[col] = (clinical[col] - self.demo_mean[col]) / self.demo_std[col]
         clinical = clinical[clinical["patient_id"].isin(self.patient_ids)]
@@ -175,6 +196,26 @@ class RenalTumorSectorDataset(Dataset):
                 f"{paths['radiomics']} is missing selected features {missing_features}; "
                 "re-run src/data/top16_selection.py"
             )
+        if preprocessing and "radiomic_mean" in preprocessing:
+            self.radiomic_mean = pd.Series(preprocessing["radiomic_mean"]).reindex(self.top16)
+            self.radiomic_std = pd.Series(preprocessing["radiomic_std"]).reindex(self.top16)
+        else:
+            train_radiomics = radiomics.loc[
+                radiomics["patient_id"].isin(set(splits.get("train", []))), self.top16
+            ]
+            if train_radiomics.empty:
+                raise ValueError("No train-patient radiomics rows; cannot fit radiomic scaler")
+            if not np.isfinite(train_radiomics.to_numpy(dtype=np.float64)).all():
+                raise ValueError("Train-patient radiomics contain non-finite values")
+            self.radiomic_mean = train_radiomics.mean()
+            self.radiomic_std = train_radiomics.std(ddof=0).replace(0, 1.0)
+        if (not np.isfinite(self.radiomic_mean.to_numpy(dtype=np.float64)).all()
+                or not np.isfinite(self.radiomic_std.to_numpy(dtype=np.float64)).all()
+                or (self.radiomic_std <= 0).any()):
+            raise ValueError("Radiomic scaler values must be finite with positive standard deviations")
+        radiomics.loc[:, self.top16] = (
+            radiomics[self.top16] - self.radiomic_mean
+        ) / self.radiomic_std
         radiomics = radiomics[radiomics["patient_id"].isin(self.patient_ids)]
         self.radiomics = {
             (r["patient_id"], int(r["slice_idx"])): r[self.top16].to_numpy(dtype=np.float32)
@@ -247,17 +288,21 @@ class RenalTumorSectorDataset(Dataset):
         }
 
 
-def get_dataloaders(batch_size=8, num_workers=0, augment=True, seed=42, root=REPO_ROOT):
+def get_dataloaders(batch_size=8, num_workers=0, augment=True, seed=42, root=REPO_ROOT,
+                    paths=None):
     """
     Returns {'train': DataLoader, 'val': DataLoader, 'test': DataLoader}.
     Train is shuffled with a seeded generator; val/test are deterministic.
     Empty splits yield empty loaders (0 batches) rather than erroring.
     """
+    paths = paths or get_paths(root=root)
     loaders = {}
     for split in ("train", "val", "test"):
         ds = RenalTumorSectorDataset(
             split=split,
             augment=(split == "train" and augment),
+            paths=paths,
+            balance_seed=seed,
             root=root,
         )
         shuffle = split == "train" and len(ds) > 0

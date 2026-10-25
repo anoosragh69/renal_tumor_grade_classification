@@ -29,6 +29,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -37,7 +38,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from src.data.dataset import get_dataloaders
+from src.data.dataset import get_paths
 from src.models.vvit import VViT, TOKEN_ORDER
 from src.models.fusion_baseline_vote import majority_vote
 from src.training.evaluation import (
@@ -94,6 +95,14 @@ def main():
     p.add_argument("--n-boot", type=int, default=1000)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--device", default="auto")
+    p.add_argument("--split-file", default=None,
+                   help="Override the split JSON saved with the checkpoint")
+    p.add_argument("--top16-file", default=None,
+                   help="Override the train-only feature list saved with the checkpoint")
+    p.add_argument("--radiomics-file", default=None,
+                   help="Override the radiomics CSV saved with the checkpoint")
+    p.add_argument("--output-tag", default=None,
+                   help="Optional tag for separate metrics and prediction files")
     args = p.parse_args()
 
     device = torch.device(
@@ -101,6 +110,20 @@ def main():
         ("cpu" if args.device == "auto" else args.device)
     )
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
+    preprocessing = ckpt.get("preprocessing")
+    if not preprocessing or "radiomic_mean" not in preprocessing:
+        raise ValueError(
+            "Checkpoint predates train-only radiomic scaling; retrain before evaluation"
+        )
+    saved_paths = ckpt.get("data_paths", {})
+    paths = get_paths(
+        splits_file=args.split_file or saved_paths.get("splits"),
+        top16_file=args.top16_file or saved_paths.get("top16"),
+        radiomics_file=args.radiomics_file or saved_paths.get("radiomics"),
+    )
+    output_tag = args.output_tag or ckpt.get("run_tag")
+    if output_tag is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", output_tag):
+        raise ValueError("--output-tag may contain only letters, digits, dot, underscore, and hyphen")
     cfg = ckpt.get("model_config", {})
     model = VViT(**cfg).to(device)
     model.load_state_dict(ckpt["model_state"])
@@ -109,13 +132,19 @@ def main():
 
     # Deterministic loader: no augmentation, no shuffle
     from src.data.dataset import RenalTumorSectorDataset
-    ds = RenalTumorSectorDataset(split=args.split, augment=False)
+    ds = RenalTumorSectorDataset(
+        split=args.split,
+        augment=False,
+        paths=paths,
+        preprocessing=preprocessing,
+    )
     loader = torch.utils.data.DataLoader(ds, batch_size=args.batch_size, shuffle=False)
     print(f"{args.split}: {len(ds.patient_ids)} patients, {len(ds)} slices", flush=True)
 
     df = predict_split(model, loader, device)
     os.makedirs(METRICS_DIR, exist_ok=True)
-    pred_path = os.path.join(METRICS_DIR, f"{args.split}_predictions.csv")
+    suffix = f"_{output_tag}" if output_tag else ""
+    pred_path = os.path.join(METRICS_DIR, f"{args.split}_predictions{suffix}.csv")
     df.to_csv(pred_path, index=False)
 
     # ── Image-level (per-slice) ───────────────────────────────────────────────
@@ -148,6 +177,9 @@ def main():
     out = {
         "checkpoint": os.path.relpath(args.checkpoint, RESULTS),
         "checkpoint_epoch": ckpt.get("epoch"),
+        "run_tag": output_tag,
+        "data_paths": paths,
+        "preprocessing": preprocessing,
         "split": args.split,
         "n_slices": int(len(df)),
         "patients": patient_n,
@@ -159,7 +191,7 @@ def main():
             "patient-level: majority vote labels, mean prob for AUC",
         ],
     }
-    out_path = os.path.join(METRICS_DIR, f"{args.split}_metrics.json")
+    out_path = os.path.join(METRICS_DIR, f"{args.split}_metrics{suffix}.json")
     with open(out_path, "w") as f:
         json.dump(out, f, indent=2)
 

@@ -6,6 +6,14 @@ Plan: `tasks/plan.md`. Checklist: `tasks/todo.md`. Only dated, factual notes liv
 
 ## 2026-10-25
 
+### vViT multi-run preparation
+
+- Added split-specific input selection to the vViT training and evaluation scripts, stable run tags for separate checkpoint/metric artifacts, and split-specific train-only top-16 feature selection. Train crop balancing is seeded from each run's seed.
+- Added train-only z-scaling for radiomic inputs. Training-patient rows determine the means and standard deviations; each checkpoint records those values with its input artifact paths. The earlier two-epoch vViT probe predates this scaling and is not a final result.
+- Generated separate top-16 feature/radiomics artifacts for paper seeds 43 and 44.
+- Added and ran `build_nested_cv_splits.py`. Each outer fold remains untouched for test evaluation; an inner stratified 15% patient subset of outer training is used for early stopping. Five split and feature-selection artifact sets are in ignored `data/processed/` paths. Unlabeled patients in `clinical.csv` are excluded when mapping CV labels.
+- Paper-style and CV training/evaluation runs remain pending.
+
 ### Image baseline suite on the 171-patient cohort
 
 - Completed ViT, ConvNeXt, and ResNeXt training on the seed-42 split using the 200-epoch cap, patience 15, lr 1e-4, AMP, and pretrained weights. Best validation-accuracy checkpoints were at epochs 4, 3, and 3; runs stopped after 19, 18, and 18 epochs respectively.

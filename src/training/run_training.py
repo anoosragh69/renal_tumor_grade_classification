@@ -23,6 +23,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import sys
 import time
 
@@ -30,7 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 import torch
 
-from src.data.dataset import SECTOR_KEYS, get_dataloaders
+from src.data.dataset import SECTOR_KEYS, get_dataloaders, get_paths
 from src.models.vvit import VViT
 from src.models.fusion_baseline_vote import majority_vote
 from src.training.train import multi_sector_bce_loss, build_paper_adam
@@ -106,23 +107,54 @@ def train(args) -> dict:
     if device.type == "cuda":
         torch.cuda.manual_seed_all(args.seed)
 
+    run_tag = args.run_name.strip() if args.run_name else ""
+    if run_tag and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", run_tag):
+        raise ValueError("--run-name may contain only letters, digits, dot, underscore, and hyphen")
+    suffix = f"_{run_tag}" if run_tag else ""
+    if run_tag:
+        tagged_outputs = [
+            os.path.join(CKPT_DIR, f"vvit{suffix}_best.pt"),
+            os.path.join(CKPT_DIR, f"vvit{suffix}_last.pt"),
+            os.path.join(METRICS_DIR, f"train_metrics{suffix}.jsonl"),
+            os.path.join(METRICS_DIR, f"train_summary{suffix}.json"),
+            os.path.join(RUNS_DIR, run_tag),
+        ]
+        existing = [path for path in tagged_outputs if os.path.exists(path)]
+        if existing:
+            raise FileExistsError(
+                f"Run tag {run_tag!r} already has outputs; choose a new --run-name: {existing}"
+            )
+    paths = get_paths(splits_file=args.split_file, top16_file=args.top16_file,
+                      radiomics_file=args.radiomics_file)
     loaders = get_dataloaders(batch_size=args.batch_size, num_workers=args.num_workers,
-                              augment=not args.no_aug, seed=args.seed)
+                              augment=not args.no_aug, seed=args.seed, paths=paths)
     n_train, n_val = len(loaders["train"].dataset), len(loaders["val"].dataset)
     print(f"train slices: {n_train} | val slices: {n_val}", flush=True)
+    train_dataset = loaders["train"].dataset
+    preprocessing = {
+        "demographic_mean": {k: float(v) for k, v in train_dataset.demo_mean.items()},
+        "demographic_std": {k: float(v) for k, v in train_dataset.demo_std.items()},
+        "radiomic_mean": {k: float(v) for k, v in train_dataset.radiomic_mean.items()},
+        "radiomic_std": {k: float(v) for k, v in train_dataset.radiomic_std.items()},
+    }
 
     model = VViT().to(device)
     optimizer = build_paper_adam(model.parameters(), lr=args.lr)
 
-    run_name = time.strftime("%Y%m%d-%H%M%S")
+    run_name = run_tag or time.strftime("%Y%m%d-%H%M%S")
     writer = get_writer(run_name)
     os.makedirs(CKPT_DIR, exist_ok=True)
     os.makedirs(METRICS_DIR, exist_ok=True)
-    jsonl_path = os.path.join(METRICS_DIR, "train_metrics.jsonl")
+    jsonl_path = os.path.join(METRICS_DIR, f"train_metrics{suffix}.jsonl")
     metrics_f = open(jsonl_path, "a", encoding="utf-8")
 
     config = vars(args) | {"run_name": run_name, "device": str(device),
+                           "run_tag": run_tag or None,
+                           "data_paths": paths,
+                           "preprocessing": preprocessing,
                            "train_slices": n_train, "val_slices": n_val}
+    best_checkpoint = os.path.join(CKPT_DIR, f"vvit{suffix}_best.pt")
+    last_checkpoint = os.path.join(CKPT_DIR, f"vvit{suffix}_last.pt")
     metrics_f.write(json.dumps({"type": "config", **config}) + "\n")
     metrics_f.flush()
 
@@ -174,8 +206,9 @@ def train(args) -> dict:
             best_epoch = epoch
             no_improve = 0
             save_checkpoint(model, optimizer, epoch, row,
-                            os.path.join(CKPT_DIR, "vvit_best.pt"),
-                            extra={"run_name": run_name})
+                            best_checkpoint,
+                            extra={"run_name": run_name, "run_tag": run_tag or None,
+                                   "data_paths": paths, "preprocessing": preprocessing})
         else:
             no_improve += 1
             if patience and no_improve >= patience:
@@ -184,9 +217,9 @@ def train(args) -> dict:
                       f"(best {best_val_acc:.4f} @ {best_epoch})", flush=True)
                 break
 
-    save_checkpoint(model, optimizer, epochs_run, row,
-                    os.path.join(CKPT_DIR, "vvit_last.pt"),
-                    extra={"run_name": run_name})
+    save_checkpoint(model, optimizer, epochs_run, row, last_checkpoint,
+                    extra={"run_name": run_name, "run_tag": run_tag or None,
+                           "data_paths": paths, "preprocessing": preprocessing})
     if writer is not None:
         writer.close()
     metrics_f.close()
@@ -194,7 +227,7 @@ def train(args) -> dict:
     summary = {"run_name": run_name, "best_epoch": best_epoch,
                "best_val_acc": best_val_acc, "epochs_run": epochs_run,
                "stopped_early": stopped_early, **config}
-    with open(os.path.join(METRICS_DIR, "train_summary.json"), "w") as f:
+    with open(os.path.join(METRICS_DIR, f"train_summary{suffix}.json"), "w") as f:
         json.dump(summary, f, indent=2)
     print(f"\nBest val_acc {best_val_acc:.4f} @ epoch {best_epoch} "
           f"({epochs_run} epochs run"
@@ -217,7 +250,16 @@ def parse_args(argv=None):
                    help="disable CUDA autocast + GradScaler mixed precision")
     p.add_argument("--device", default="auto")
     p.add_argument("--num-workers", type=int, default=0)
-    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--seed", type=int, default=42,
+                   help="Random seed for model initialization, shuffling, and train balancing")
+    p.add_argument("--split-file", default=None,
+                   help="Split JSON (default: data/processed/splits.json)")
+    p.add_argument("--top16-file", default=None,
+                   help="Train-only feature list JSON (default: top16_features.json)")
+    p.add_argument("--radiomics-file", default=None,
+                   help="Radiomics CSV (default: radiomics_top16.csv)")
+    p.add_argument("--run-name", default=None,
+                   help="Unique tag for separate checkpoint and metric files; existing tags are rejected")
     p.add_argument("--no-aug", action="store_true", help="Disable train augmentations")
     p.add_argument("--smoke", action="store_true", help="Cap at 2 epochs for a smoke run")
     return p.parse_args(argv)

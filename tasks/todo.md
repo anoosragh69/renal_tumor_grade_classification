@@ -87,9 +87,13 @@ Target: full vViT run in under ~1 h; a 37 h run means a bug.
 - [x] Fix attention block to the paper shape: inner dim 512 (8 heads × 64) projected back to 128 — done 2026-10-24, `PaperAttention` + `EncoderBlock` in `src/models/vvit.py` (self-test asserts shape; 4.27M params; epoch 32.8 → 35.2 s)
 - [x] Training protocol implemented: BCE per head averaged over batch × heads; Adam (β 0.9/0.999, ε 1e-8, wd 0, no AMSGrad), lr 1e-3; AMP; early stopping patience 15 on val accuracy; best-val checkpoint
 - [x] Image-sector-only augmentation implemented: h-flip, v-flip, perspective, invert, posterize, solarize, equalize
-- [x] Run isolation added: training/evaluation accept split, top-16, and radiomics artifact paths; `--run-name` keeps checkpoints, epoch logs, summaries, metrics, and predictions separate. Top-16 selection accepts a split file and output suffix, so each paper-style seed uses train-only feature selection.
-- [ ] Run paper-style split for ≥3 seeds. For seeds 43 and 44, first run `python src/data/top16_selection.py --split-file data/processed/splits_seed43.json --output-suffix seed43` (replace seed43 for the second run), then train with the matching split/top16/radiomics paths and a unique run name. Seed 42 can use the default artifacts.
-- [ ] Add nested train/validation/test artifacts for the five outer CV folds; early stopping must use an inner validation subset of each outer training fold, keeping the outer fold untouched for evaluation.
+- [x] Train-only radiomic z-scaling added. Means/stds are fit from training-patient rows, applied to the requested split, and recorded with each checkpoint.
+- [x] Run isolation added: training/evaluation accept split, top-16, and radiomics artifact paths; unique `--run-name` values keep checkpoints, epoch logs, summaries, metrics, and predictions separate. Top-16 selection accepts a split file and output suffix, so each paper-style seed uses train-only feature selection. Train crop balancing also uses the run seed; evaluation rejects checkpoints without saved scaler metadata.
+- [x] Generate train-only top-16 features and radiomics inputs for the seed-43 and seed-44 paper splits.
+- [ ] Run paper-style split for ≥3 seeds. Train seeds 43/44 with `--run-name paper_seed43 --seed 43 --split-file data/processed/splits_seed43.json --top16-file data/processed/top16_features_seed43.json --radiomics-file data/processed/radiomics_top16_seed43.csv` (use seed44 paths/tag for the other run). Seed 42 can use the default artifacts with `--run-name paper_seed42`.
+- [x] Add `src/data/build_nested_cv_splits.py` and generate five inner train/validation plus untouched outer-test artifacts from `cv_folds.json`; the fold files have 115–116 train, 21 validation, and 34–35 outer-test patients.
+- [x] Select train-only top-16 features and radiomics inputs separately for all five nested CV folds.
+- [ ] Train/evaluate all five CV folds using each `cv_run_splits/fold_N.json` and matching `cv_fold_N` feature/radiomics files.
 - [x] Patient-level evaluation supports mean slice probability for AUROC, majority vote for labels, and bootstrap CIs resampling patients (~1000)
 - [x] Image-level metrics are reported as secondary and labelled as inflated by within-patient correlation
 - [x] Evaluation supports accuracy, sensitivity, specificity, PPV, NPV, F-score, log loss, Cohen's κ, and AUROC
@@ -115,7 +119,7 @@ Only if time allows; not required for the core result.
 - [x] `TimmBaseline` code (`vit_small_patch16_224` / `convnext_small` / `resnext50_32x4d`) with `in_chans=1` stem fold, 128→224 resize
 - [x] Baseline non-learning diagnosis and fix (lr 1e-4, AMP, early stopping patience 15, `num_workers=2`) — `docs/baseline_training_diagnosis.md`
 - [x] Run pretrained image baselines — the full ViT, ConvNeXt, and ResNeXt suite completed on the paper-style seed-42 split (2026-10-25; broader than the planned single baseline)
-- [ ] DeLong / McNemar comparison only if this baseline is trained
+- [ ] DeLong / McNemar comparison of vViT and image baselines after vViT test predictions are available
 - [x] No additional baseline training planned; the full ViT/ConvNeXt/ResNeXt suite has already run. No CNN baseline CV planned.
 - [ ] **Checkpoint (optional):** baseline vs vViT comparison table
 
@@ -161,7 +165,7 @@ Only if time allows; not required for the core result.
 
 ## Notes
 
-- **Artifact status (2026-10-25):** `clinical.csv`, `splits.json` (171-patient cohort; seed 42), `splits_seed43.json`, `splits_seed44.json`, `cv_folds.json`, and seed-42 train-only top-16 radiomics artifacts are present. The vViT scripts now accept split-specific inputs and tagged outputs. Paper-style multi-seed runs are ready; nested inner-validation artifacts for CV remain to be added. Baseline metrics and predictions are present under `results/metrics/`.
+- **Artifact status (2026-10-25):** seed-specific train-only top-16 artifacts exist for paper seeds 42–44. Five nested CV splits and their train-only top-16 artifacts are generated under ignored `data/processed/` paths. The vViT scripts support split-specific inputs, train-only radiomic scaling, and tagged outputs. The earlier two-epoch vViT probe predates radiomic scaling and is not a final result. Paper-style multi-seed and CV training/evaluation remain. Baseline metrics and predictions are present under `results/metrics/`.
 - **Dataset:** real `kits19/data/` present (210 cases with segmentation + `kits.json`; cases 00210–00299 imaging-only).
 - **Radiomics env:** pyradiomics 3.1.0 in Miniconda env `radiomics` (`%USERPROFILE%\miniconda3\envs\radiomics\python.exe`; Python 3.9, numpy 1.26.4). Full run: that python + `src/data/radiomics_extraction.py --splits data/processed/splits.json --workers 7` (~50 min; resume checkpoints in `data/processed/radiomics_parts/`). `normalize=True` + binWidth=25 gives ~0.4 s/slice.
 - **Training env:** torch 2.14.0+cu126, torchvision 0.29.0+cu126; `torch.cuda.is_available()=True` on RTX 3050 Laptop 6GB.
