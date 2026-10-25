@@ -4,6 +4,14 @@ Plan: `tasks/plan.md`. Checklist: `tasks/todo.md`. Only dated, factual notes liv
 
 ---
 
+## 2026-10-25
+
+### Image baseline suite on the 171-patient cohort
+
+- Completed ViT, ConvNeXt, and ResNeXt training on the seed-42 split using the 200-epoch cap, patience 15, lr 1e-4, AMP, and pretrained weights. Best validation-accuracy checkpoints were at epochs 4, 3, and 3; runs stopped after 19, 18, and 18 epochs respectively.
+- Evaluated all checkpoints on the untouched 31-patient / 6,348-slice test split. Patient AUROC: ViT **0.732** (95% CI 0.489–0.958), ConvNeXt **0.657** (0.423–0.881), ResNeXt **0.722** (0.484–0.929). Patient accuracy: **0.806**, **0.710**, and **0.645** respectively. Image AUROC: **0.637**, **0.583**, and **0.609**.
+- The patient-level intervals are wide at n=31. Results are descriptive; no tuning for improved accuracy is planned. Detailed table and interpretation: `docs/baseline_results_2026-10-25.md`.
+
 ## 2026-10-24
 
 ### Cohort fix + M1/M2/M3 re-run on the 171-patient cohort (supersedes the 126-cohort numbers below)

@@ -63,8 +63,8 @@ Run this before any neural training.
 
 - [x] **MD-1 Cohort was 126, not ~157 — RESOLVED 2026-10-24.** `splits.json` used tumor-slice counts, excluding **46** patients; the paper excludes **15**. No reading reproduces 15: CT-series counts exclude **1** (only `case_00160`), tumor-slice counts 46, log-space 46, robust 4. **Decision (declared deviation):** use **CT-series** slice counts (literal "images per patient"), giving a **171**-patient cohort inside the plan's 157–172 target. No equalisation. See `LOG.md` 2026-10-24.
 - [x] **MD-2 M2 gate near chance — RESOLVED (audited) 2026-10-24.** Re-run at patient level on the 171 cohort: LR 0.626 / RF 0.636, CIs exclude 0.5 (weak but real signal, still far below the paper's radiomics dominance). Patient-aggregated variant ~0.60 rules out per-slice noise as the cause. Labels, extraction and leakage audited clean (patient-level splits disjoint; radiomics recomputed). Proceeding to M4 with the caveat that radiomics alone is weak in this cohort.
-- [ ] **Baseline runs look incomplete.** `baseline_*_test_metrics.json` all report `checkpoint_epoch: 2` and `n_slices: 320` — these are not the 200-epoch early-stopped runs the checklist describes.
-- [ ] **vViT attention still does not match the paper.** `src/models/vvit.py` uses `nn.TransformerEncoder` with 8 heads / dim 128 → head_dim 16; the plan (§M4) requires inner dim 512 (8×64) projected back to 128 via a custom block. Not yet done.
+- [x] **Baseline suite completed on the 171-patient cohort (2026-10-25).** ViT, ConvNeXt, and ResNeXt all trained with the configured 200-epoch cap / patience 15 and evaluated on 31 test patients (6,348 slices). Best validation accuracy was at epochs 3–4. Patient AUROC: ViT 0.732 (95% CI 0.489–0.958), ConvNeXt 0.657 (0.423–0.881), ResNeXt 0.722 (0.484–0.929). These are indicative estimates with wide intervals; no accuracy-tuning follow-up is planned. Results: `docs/baseline_results_2026-10-25.md`.
+- [x] **vViT attention mismatch — RESOLVED 2026-10-24 (`8983495`).** `src/models/vvit.py` now uses a custom `PaperAttention` + `EncoderBlock`: q/k/v project 128 → 8 heads × head_dim 64 (inner 512), attention at head_dim 64, output projected 512 → 128. Self-test asserts `inner_dim == 512`; model is 4.27M params and deterministic across runs.
 
 ---
 
@@ -85,12 +85,14 @@ Target: full vViT run in under ~1 h; a 37 h run means a bug.
 ## M4: vViT — paper-style split (≥3 seeds) + 5-fold CV
 
 - [x] Fix attention block to the paper shape: inner dim 512 (8 heads × 64) projected back to 128 — done 2026-10-24, `PaperAttention` + `EncoderBlock` in `src/models/vvit.py` (self-test asserts shape; 4.27M params; epoch 32.8 → 35.2 s)
-- [ ] Training protocol: BCE per head averaged over batch × heads; Adam (β 0.9/0.999, ε 1e-8, wd 0, no AMSGrad), lr 1e-3; AMP; early stopping patience 15 on val accuracy; best-val checkpoint
-- [ ] Image-sector-only augmentation: h-flip, v-flip, perspective, invert, posterize, solarize, equalize
-- [ ] Run paper-style split for ≥3 seeds; run 5-fold patient-level CV
-- [ ] Patient-level metrics primary: mean slice probability for AUROC, majority vote for labels; bootstrap CIs resampling **patients** (~1000)
-- [ ] Image-level metrics secondary only, explicitly labelled as inflated by within-patient correlation
-- [ ] Report accuracy, sensitivity, specificity, PPV, NPV, F-score, log loss, Cohen's κ, AUROC
+- [x] Training protocol implemented: BCE per head averaged over batch × heads; Adam (β 0.9/0.999, ε 1e-8, wd 0, no AMSGrad), lr 1e-3; AMP; early stopping patience 15 on val accuracy; best-val checkpoint
+- [x] Image-sector-only augmentation implemented: h-flip, v-flip, perspective, invert, posterize, solarize, equalize
+- [x] Run isolation added: training/evaluation accept split, top-16, and radiomics artifact paths; `--run-name` keeps checkpoints, epoch logs, summaries, metrics, and predictions separate. Top-16 selection accepts a split file and output suffix, so each paper-style seed uses train-only feature selection.
+- [ ] Run paper-style split for ≥3 seeds. For seeds 43 and 44, first run `python src/data/top16_selection.py --split-file data/processed/splits_seed43.json --output-suffix seed43` (replace seed43 for the second run), then train with the matching split/top16/radiomics paths and a unique run name. Seed 42 can use the default artifacts.
+- [ ] Add nested train/validation/test artifacts for the five outer CV folds; early stopping must use an inner validation subset of each outer training fold, keeping the outer fold untouched for evaluation.
+- [x] Patient-level evaluation supports mean slice probability for AUROC, majority vote for labels, and bootstrap CIs resampling patients (~1000)
+- [x] Image-level metrics are reported as secondary and labelled as inflated by within-patient correlation
+- [x] Evaluation supports accuracy, sensitivity, specificity, PPV, NPV, F-score, log loss, Cohen's κ, and AUROC
 - [ ] **Checkpoint:** patient-level results table + CIs for all seeds/folds; run configs saved
 
 ---
@@ -112,9 +114,9 @@ Only if time allows; not required for the core result.
 
 - [x] `TimmBaseline` code (`vit_small_patch16_224` / `convnext_small` / `resnext50_32x4d`) with `in_chans=1` stem fold, 128→224 resize
 - [x] Baseline non-learning diagnosis and fix (lr 1e-4, AMP, early stopping patience 15, `num_workers=2`) — `docs/baseline_training_diagnosis.md`
-- [ ] Run **one** pretrained baseline (ResNet18 or ConvNeXt-tiny), lr 1e-4, paper-style split only
+- [x] Run pretrained image baselines — the full ViT, ConvNeXt, and ResNeXt suite completed on the paper-style seed-42 split (2026-10-25; broader than the planned single baseline)
 - [ ] DeLong / McNemar comparison only if this baseline is trained
-- [ ] Do not run the full ViT/ConvNeXt/ResNeXt trio or CV on CNN baselines unless time allows
+- [x] No additional baseline training planned; the full ViT/ConvNeXt/ResNeXt suite has already run. No CNN baseline CV planned.
 - [ ] **Checkpoint (optional):** baseline vs vViT comparison table
 
 ---
@@ -159,7 +161,7 @@ Only if time allows; not required for the core result.
 
 ## Notes
 
-- **Artifact status:** `data/processed/clinical.csv` is now **real** (210 patients; 172 labeled; no missing model-facing fields). Current `data/processed/splits.json` is still the old 66-patient split (train 48 / val 6 / test 12), produced with pre-split equalisation and mean±1 SD; it must be regenerated next in M1. Current `top16_features.json` was selected on the old split and must be re-fitted train-only per fold/seed.
+- **Artifact status (2026-10-25):** `clinical.csv`, `splits.json` (171-patient cohort; seed 42), `splits_seed43.json`, `splits_seed44.json`, `cv_folds.json`, and seed-42 train-only top-16 radiomics artifacts are present. The vViT scripts now accept split-specific inputs and tagged outputs. Paper-style multi-seed runs are ready; nested inner-validation artifacts for CV remain to be added. Baseline metrics and predictions are present under `results/metrics/`.
 - **Dataset:** real `kits19/data/` present (210 cases with segmentation + `kits.json`; cases 00210–00299 imaging-only).
 - **Radiomics env:** pyradiomics 3.1.0 in Miniconda env `radiomics` (`%USERPROFILE%\miniconda3\envs\radiomics\python.exe`; Python 3.9, numpy 1.26.4). Full run: that python + `src/data/radiomics_extraction.py --splits data/processed/splits.json --workers 7` (~50 min; resume checkpoints in `data/processed/radiomics_parts/`). `normalize=True` + binWidth=25 gives ~0.4 s/slice.
 - **Training env:** torch 2.14.0+cu126, torchvision 0.29.0+cu126; `torch.cuda.is_available()=True` on RTX 3050 Laptop 6GB.
