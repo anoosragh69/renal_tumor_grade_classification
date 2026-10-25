@@ -90,20 +90,20 @@ Target: full vViT run in under ~1 h; a 37 h run means a bug.
 - [x] Train-only radiomic z-scaling added. Means/stds are fit from training-patient rows, applied to the requested split, and recorded with each checkpoint.
 - [x] Run isolation added: training/evaluation accept split, top-16, and radiomics artifact paths; unique `--run-name` values keep checkpoints, epoch logs, summaries, metrics, and predictions separate. Top-16 selection accepts a split file and output suffix, so each paper-style seed uses train-only feature selection. Train crop balancing also uses the run seed; evaluation rejects checkpoints without saved scaler metadata.
 - [x] Generate train-only top-16 features and radiomics inputs for the seed-43 and seed-44 paper splits.
-- [ ] Run paper-style split for ≥3 seeds. Train seeds 43/44 with `--run-name paper_seed43 --seed 43 --split-file data/processed/splits_seed43.json --top16-file data/processed/top16_features_seed43.json --radiomics-file data/processed/radiomics_top16_seed43.csv` (use seed44 paths/tag for the other run). Seed 42 can use the default artifacts with `--run-name paper_seed42`.
+- [x] Run paper-style split for ≥3 seeds. Seeds 42–44 completed; full results in `docs/vvit_results_2026-10-25.md`.
 - [x] Add `src/data/build_nested_cv_splits.py` and generate five inner train/validation plus untouched outer-test artifacts from `cv_folds.json`; the fold files have 115–116 train, 21 validation, and 34–35 outer-test patients.
 - [x] Select train-only top-16 features and radiomics inputs separately for all five nested CV folds.
-- [ ] Train/evaluate all five CV folds using each `cv_run_splits/fold_N.json` and matching `cv_fold_N` feature/radiomics files.
+- [x] Train/evaluate all five CV folds using nested split artifacts and matching train-only top-16/radiomics files; pooled out-of-fold metrics include all 171 patients.
 - [x] Patient-level evaluation supports mean slice probability for AUROC, majority vote for labels, and bootstrap CIs resampling patients (~1000)
 - [x] Image-level metrics are reported as secondary and labelled as inflated by within-patient correlation
 - [x] Evaluation supports accuracy, sensitivity, specificity, PPV, NPV, F-score, log loss, Cohen's κ, and AUROC
-- [ ] **Checkpoint:** patient-level results table + CIs for all seeds/folds; run configs saved
+- [x] **Checkpoint:** patient-level results table + CIs for all seeds/folds; tagged run configs saved in `results/metrics/` and checkpoints.
 
 ---
 
 ## M5: Permutation importance + figures
 
-- [ ] Baseline accuracy of the trained model on the test split
+- [x] Baseline accuracy of the seed-42 vViT on the test split is reported in the seed results artifacts.
 - [ ] Per sector: shuffle patient sector values across patients (other sectors intact); recompute accuracy; repeat 100×
 - [ ] Importance = drop in accuracy; pairwise Mann–Whitney U between sectors
 - [ ] Boxplots + ROC figure (Fig. 4/5 equivalents)
@@ -165,7 +165,7 @@ Only if time allows; not required for the core result.
 
 ## Notes
 
-- **Artifact status (2026-10-25):** seed-specific train-only top-16 artifacts exist for paper seeds 42–44. Five nested CV splits and their train-only top-16 artifacts are generated under ignored `data/processed/` paths. The vViT scripts support split-specific inputs, train-only radiomic scaling, and tagged outputs. The earlier two-epoch vViT probe predates radiomic scaling and is not a final result. Paper-style multi-seed and CV training/evaluation remain. Baseline metrics and predictions are present under `results/metrics/`.
+- **Artifact status (2026-10-25):** paper seeds 42–44 and all five nested CV training/evaluation runs are complete; results are summarized in `docs/vvit_results_2026-10-25.md`. Seed/fold checkpoints, predictions, and scaler metadata are in ignored `results/`. The earlier two-epoch vViT probe predates radiomic scaling and is not a final result. Permutation importance and final report remain. Baseline metrics and predictions are present under `results/metrics/`.
 - **Dataset:** real `kits19/data/` present (210 cases with segmentation + `kits.json`; cases 00210–00299 imaging-only).
 - **Radiomics env:** pyradiomics 3.1.0 in Miniconda env `radiomics` (`%USERPROFILE%\miniconda3\envs\radiomics\python.exe`; Python 3.9, numpy 1.26.4). Full run: that python + `src/data/radiomics_extraction.py --splits data/processed/splits.json --workers 7` (~50 min; resume checkpoints in `data/processed/radiomics_parts/`). `normalize=True` + binWidth=25 gives ~0.4 s/slice.
 - **Training env:** torch 2.14.0+cu126, torchvision 0.29.0+cu126; `torch.cuda.is_available()=True` on RTX 3050 Laptop 6GB.

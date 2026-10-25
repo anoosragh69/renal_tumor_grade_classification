@@ -12,7 +12,14 @@ Plan: `tasks/plan.md`. Checklist: `tasks/todo.md`. Only dated, factual notes liv
 - Added train-only z-scaling for radiomic inputs. Training-patient rows determine the means and standard deviations; each checkpoint records those values with its input artifact paths. The earlier two-epoch vViT probe predates this scaling and is not a final result.
 - Generated separate top-16 feature/radiomics artifacts for paper seeds 43 and 44.
 - Added and ran `build_nested_cv_splits.py`. Each outer fold remains untouched for test evaluation; an inner stratified 15% patient subset of outer training is used for early stopping. Five split and feature-selection artifact sets are in ignored `data/processed/` paths. Unlabeled patients in `clinical.csv` are excluded when mapping CV labels.
-- Paper-style and CV training/evaluation runs remain pending.
+- At the time of this preparation note, paper-style and CV training/evaluation were pending; those runs are recorded below.
+
+### vViT paper-split and CV runs
+
+- Completed paper-style seeds 42–44 and all five nested CV folds with the configured protocol. Early stopping ran 21, 22, 30, 20, 27, 21, 32, and 20 epochs respectively; best epochs ranged from 5 to 17. Each checkpoint was evaluated once on its held-out patients.
+- Paper-split patient AUROCs for seeds 42/43/44: **0.611 / 0.646 / 0.540** (test n=31 per split; wide CIs). The test cohorts overlap across split seeds, so treat these as split variability rather than independent replications.
+- CV patient AUROC mean ± SD across folds: **0.618 ± 0.047**; patient accuracy **0.619 ± 0.095**. Pooled out-of-fold results across 171 patients: accuracy **0.620**, AUROC **0.608** (95% patient-bootstrap CI 0.510–0.699).
+- Full seed/fold table and interpretation: `docs/vvit_results_2026-10-25.md`. No performance tuning was done.
 
 ### Image baseline suite on the 171-patient cohort
 
