@@ -104,11 +104,11 @@ Target: full vViT run in under ~1 h; a 37 h run means a bug.
 ## M5: Permutation importance + figures
 
 - [x] Baseline accuracy of the seed-42 vViT on the test split is reported in the seed results artifacts.
-- [ ] Per sector: shuffle patient sector values across patients (other sectors intact); recompute accuracy; repeat 100×
-- [ ] Importance = drop in accuracy; pairwise Mann–Whitney U between sectors
-- [ ] Boxplots + ROC figure (Fig. 4/5 equivalents)
-- [ ] Compare with paper: radiomic dominant (~0.30 image-level, 0.154 patient-level); image sector near zero/negative
-- [ ] **Checkpoint:** importance table + figures + comparison note
+- [x] Per sector: shuffle patient sector values across patients (other sectors intact); recompute accuracy; repeat 100×. Slice profiles are aligned by rank when patients have different slice counts.
+- [x] Importance = drop in accuracy; pairwise Mann–Whitney U between sectors (exploratory; repeats reuse the same test set and p-values are unadjusted)
+- [x] Boxplots + image/patient ROC figures saved under `results/figures/` (generated files are git-ignored)
+- [x] Compare with paper: this seed-42 run does not reproduce radiomics-dominant importance; clinical-sector permutations produced larger accuracy drops. See `docs/vvit_permutation_importance_2026-10-25.md`.
+- [x] **Checkpoint:** importance table + figures + comparison note; outputs summarized in `docs/vvit_permutation_importance_2026-10-25.md`
 
 ---
 

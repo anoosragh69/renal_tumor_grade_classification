@@ -2,6 +2,14 @@
 
 Plan: `tasks/plan.md`. Checklist: `tasks/todo.md`. Only dated, factual notes live here.
 
+## 2026-10-25 — vViT sector permutation importance
+
+- Added `src/training/permutation_importance.py` to load a saved seed-42 vViT checkpoint, reproduce and validate its saved test metrics, permute one whole patient sector at a time, and report accuracy drops over 100 repeats. Patient clinical vectors are reassigned as units; radiomic and image slice profiles use sorted-rank alignment to handle differing slice counts.
+- Baseline checked against evaluation output: image accuracy 0.730, image AUROC 0.572; patient accuracy 0.774, patient AUROC 0.611 (31 test patients / 6,348 slices).
+- Mean accuracy drops (image / patient): demographic 0.131 / 0.170; comorbidity 0.088 / 0.102; habit 0.087 / 0.129; radiomic 0.014 / 0.037; image 0.007 / 0.026. The clinical sectors had the largest drops in this run, unlike the paper's radiomics-dominant pattern. No accuracy optimization is planned.
+- Generated the per-repeat CSV, summary JSON (including pairwise Mann–Whitney tests), importance boxplots, and ROC figure under git-ignored `results/`. P-values are exploratory because repeats use one model and the same 31 patients, and comparisons are unadjusted for multiplicity. Full interpretation: `docs/vvit_permutation_importance_2026-10-25.md`.
+- Runtime: approximately 230 seconds for 500 perturbations. The active Python 3.14 user environment required `matplotlib==3.11.2` (already pinned by `requirements.txt`); no dependency file changed.
+
 ---
 
 ## 2026-10-25
