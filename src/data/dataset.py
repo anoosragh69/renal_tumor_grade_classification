@@ -125,12 +125,16 @@ def build_paper_augmentation(p=0.5):
 class RenalTumorSectorDataset(Dataset):
     """Sector-dict dataset over one split (train / val / test)."""
 
-    def __init__(self, split="train", augment=None, paths=None, root=REPO_ROOT):
+    def __init__(self, split="train", augment=None, paths=None, root=REPO_ROOT,
+                 balance=None, balance_seed=42):
         if paths is None:
             paths = get_paths(root)
         self.split = split
         # augment defaults to train-only
         self.augment = (split == "train") if augment is None else augment
+        # class balancing defaults to train-only (plan §3.3: subsample images in
+        # train only; val/test keep the true patient prevalence)
+        self.balance = (split == "train") if balance is None else balance
         self.paths = paths
         self.transform = build_paper_augmentation() if self.augment else None
 
@@ -190,6 +194,22 @@ class RenalTumorSectorDataset(Dataset):
         if skipped_missing_npy:
             print(f"WARNING [{split}]: {skipped_missing_npy} radiomics rows have no interim .npy — skipped.")
 
+        # ── Class balancing: subsample train images only (plan §3.3) ─────────
+        self.n_unbalanced = len(self.index)
+        if self.balance and self.index:
+            labels = np.array([self.clinical[pid][3] for pid, _ in self.index])
+            counts = np.bincount(labels.astype(int), minlength=2)
+            target = int(counts.min())
+            rng = np.random.default_rng(balance_seed)
+            keep = []
+            for cls in (0, 1):
+                pos = np.flatnonzero(labels == cls)
+                keep.extend(rng.choice(pos, size=target, replace=False).tolist())
+            self.index = sorted(self.index[i] for i in keep)
+            print(f"TRAIN balance: {self.n_unbalanced} crops "
+                  f"(low {counts[0]} / high {counts[1]}) -> {len(self.index)} "
+                  f"({target} per class)")
+
     def __len__(self):
         return len(self.index)
 
@@ -197,7 +217,6 @@ class RenalTumorSectorDataset(Dataset):
         pid, slice_idx = self.index[idx]
         demo, comorb, habit, label = self.clinical[pid]
 
-        # Image sector — float [0,1] crop from Step 2 (HU window −400..400)
         # Image sector — float [0,1] crop from Step 2 (HU window −400..400) with caching
         img_path = os.path.join(self.paths["interim"], pid, f"slice_{slice_idx:04d}.npy")
         cache_path = os.path.join(self.paths["cache"], f"{pid}_{slice_idx:04d}.npy")
@@ -261,10 +280,19 @@ def _self_test():
     paths = get_paths()
 
     loaders = get_dataloaders(batch_size=4, augment=True)
-    print("Split sizes (patients / slices):")
+    print("Split sizes (patients / crops):")
     for split, dl in loaders.items():
         ds = dl.dataset
-        print(f"  {split:5s}: {len(ds.patient_ids)} patients, {len(ds)} slices, {len(dl)} batches")
+        print(f"  {split:5s}: {len(ds.patient_ids)} patients, {len(ds)} crops, {len(dl)} batches")
+
+    # ── Balancing applies to train only (plan §3.3) ──────────────────────────
+    tr = loaders["train"].dataset
+    assert tr.balance, "train should balance classes by subsampling crops"
+    assert tr.n_unbalanced >= len(tr), "balancing must not add crops"
+    assert not loaders["val"].dataset.balance and not loaders["test"].dataset.balance, \
+        "val/test must keep the true prevalence"
+    print(f"Train-only balancing OK: {tr.n_unbalanced} -> {len(tr)} crops "
+          f"(val/test left unbalanced)")
 
     # ── Batch schema check on train ───────────────────────────────────────────
     train = loaders["train"]
@@ -307,7 +335,7 @@ def _self_test():
     # ── No augmentation on val/test: exact reconstruction ─────────────────────
     for split in ("val", "test"):
         ds = RenalTumorSectorDataset(split=split, augment=None)   # non-train default: off
-        for i in range(len(ds)):
+        for i in range(min(64, len(ds))):
             item = ds[i]
             pid, sidx = ds.index[i]
             src = np.load(os.path.join(paths["interim"], pid, f"slice_{sidx:04d}.npy"))

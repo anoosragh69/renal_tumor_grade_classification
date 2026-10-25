@@ -119,6 +119,13 @@ def to_patient_level(patient_ids, y, proba):
     return agg["y"].to_numpy(), agg["p"].to_numpy()
 
 
+def patient_feature_frame(df, feature_cols):
+    """Mean radiomic features per patient (one row per patient), label = first."""
+    agg = df.groupby("patient_id", sort=True)[feature_cols].mean()
+    agg["label"] = df.groupby("patient_id", sort=True)["label"].first()
+    return agg[feature_cols], agg["label"].to_numpy()
+
+
 def main():
     df = load_data()
     folds = load_folds()
@@ -128,6 +135,7 @@ def main():
 
     all_metrics = []
     oof = {"logistic_regression": {"y": [], "p": []}, "random_forest": {"y": [], "p": []}}
+    oof_agg = {"logistic_regression": {"y": [], "p": []}, "random_forest": {"y": [], "p": []}}
     for i, fold in enumerate(folds):
         train_patients = set(fold["train"])  # type: ignore[index]
         val_patients = set(fold["val"])      # type: ignore[index]
@@ -162,6 +170,22 @@ def main():
             oof[model]["y"].extend(y_p.tolist())
             oof[model]["p"].extend(p_p.tolist())
         metrics["patient"] = patient_metrics
+
+        # Variant: radiomics averaged per patient *before* training, so the model
+        # sees one row per patient instead of correlated slices (tests whether
+        # per-slice noise explains a near-chance gate)
+        Xtr_p, ytr_p = patient_feature_frame(train_df, feature_cols)
+        Xva_p, yva_p = patient_feature_frame(val_df, feature_cols)
+        sel_p = select_top_k_features(Xtr_p, ytr_p, k=16)
+        agg_metrics, agg_probas = train_and_evaluate(
+            Xtr_p[sel_p], ytr_p, Xva_p[sel_p], yva_p)
+        agg_metrics["selected_features"] = list(sel_p)
+        agg_metrics["n_patients"] = int(len(yva_p))
+        for model, proba in agg_probas.items():
+            oof_agg[model]["y"].extend(yva_p.tolist())
+            oof_agg[model]["p"].extend(proba.tolist())
+        metrics["patient_aggregated"] = agg_metrics
+
         all_metrics.append(metrics)
 
         fold_path = results_dir / f"radiomics_gate_fold_{i}.json"
@@ -170,23 +194,35 @@ def main():
         print(
             f"Fold {i}: slice AUROC LR {metrics['logistic_regression']['auroc']:.3f} / "
             f"RF {metrics['random_forest']['auroc']:.3f} | "
-            f"patient AUROC LR {patient_metrics['logistic_regression']['auroc']:.3f} / "
-            f"RF {patient_metrics['random_forest']['auroc']:.3f} "
-            f"({patient_metrics['logistic_regression']['n_patients']} patients)"
+            f"patient LR {patient_metrics['logistic_regression']['auroc']:.3f} / "
+            f"RF {patient_metrics['random_forest']['auroc']:.3f} | "
+            f"patient-agg LR {agg_metrics['logistic_regression']['auroc']:.3f} / "
+            f"RF {agg_metrics['random_forest']['auroc']:.3f} "
+            f"({len(yva_p)} patients)"
         )
 
     # Pooled out-of-fold over every patient (each patient is in exactly one val fold)
-    pooled = {}
-    for model in ("logistic_regression", "random_forest"):
-        y = np.asarray(oof[model]["y"])
-        p = np.asarray(oof[model]["p"])
-        pooled[model] = {
-            "auroc": float(roc_auc_score(y, p)),
-            "accuracy": float(accuracy_score(y, (p >= 0.5).astype(int))),
-            "n_patients": int(len(y)),
-        }
+    def _pooled(oof):
+        out = {}
+        for model in ("logistic_regression", "random_forest"):
+            y = np.asarray(oof[model]["y"])
+            p = np.asarray(oof[model]["p"])
+            out[model] = {
+                "auroc": float(roc_auc_score(y, p)),
+                "accuracy": float(accuracy_score(y, (p >= 0.5).astype(int))),
+                "n_patients": int(len(y)),
+            }
+        return out
 
-    summary = {"num_folds": len(folds), "per_fold": all_metrics, "pooled_patient": pooled}
+    pooled = _pooled(oof)
+    pooled_agg = _pooled(oof_agg)
+
+    summary = {
+        "num_folds": len(folds),
+        "per_fold": all_metrics,
+        "pooled_patient": pooled,
+        "pooled_patient_aggregated": pooled_agg,
+    }
     y_all = np.asarray(oof["logistic_regression"]["y"])
     summary["majority_class_baseline"] = {
         "accuracy": float(max(np.mean(y_all == 0), np.mean(y_all == 1))),
@@ -200,6 +236,8 @@ def main():
     print(f"Aggregated summary written to {summary_path}")
     for model, m in pooled.items():
         print(f"Pooled patient-level {model}: AUROC {m['auroc']:.3f}, acc {m['accuracy']:.3f}, n={m['n_patients']}")
+    for model, m in pooled_agg.items():
+        print(f"Pooled patient-AGGREGATED {model}: AUROC {m['auroc']:.3f}, acc {m['accuracy']:.3f}, n={m['n_patients']}")
     base = summary["majority_class_baseline"]
     print(f"Majority-class baseline accuracy: {base['accuracy']:.3f} "
           f"({base['low']} low / {base['high']} high of {base['n_patients']} patients)")
@@ -250,6 +288,20 @@ def write_report(summary):
         accs = [f[model]["accuracy"] for f in folds]
         name = "Logistic regression" if model == "logistic_regression" else "Random forest"
         lines.append(f"| {name} | {np.mean(aucs):.3f} +/- {np.std(aucs):.3f} | {np.mean(accs):.3f} |")
+    lines += [
+        "",
+        "## Patient-aggregated variant (features averaged per patient before training)",
+        "",
+        "Tests whether within-patient correlation between slices is what makes the",
+        "per-slice gate look near-chance: one row per patient, top-16 selected on the",
+        "train patients only.",
+        "",
+        "| Model | Pooled AUROC | Pooled accuracy | n patients |",
+        "|---|---|---|---|",
+    ]
+    for model, m in summary.get("pooled_patient_aggregated", {}).items():
+        name = "Logistic regression" if model == "logistic_regression" else "Random forest"
+        lines.append(f"| {name} | {m['auroc']:.3f} | {m['accuracy']:.3f} | {m['n_patients']} |")
     lines += [
         "",
         "## Gate decision",

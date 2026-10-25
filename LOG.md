@@ -6,6 +6,30 @@ Plan: `tasks/plan.md`. Checklist: `tasks/todo.md`. Only dated, factual notes liv
 
 ## 2026-10-24
 
+### Cohort fix + M1/M2/M3 re-run on the 171-patient cohort (supersedes the 126-cohort numbers below)
+
+- **Image-count rule changed (MD-1).** `dataset_split.py` rewritten: exclusion order is
+  missing clinical → missing ISUP → **image count mean±1 SD** → radiomics failure → no tumour
+  slice with mask ≥ 256 px; no pre-split equalisation. "Image count" is now the **CT-series
+  slice count** (from `imaging.nii.gz`), the literal reading of images per patient.
+  - No reading reproduces the paper's 15 exclusions: CT-series excludes **1** (`case_00160`),
+    tumour-slice excludes 46, log-space 46, robust 4. Chose CT-series → 171 patients.
+  - **Cohort: 171 patients (119 low / 52 high).** Exclusions: 38 no ISUP grade,
+    1 image-count outlier, 0 radiomics failure, 0 no-valid-slice.
+  - Splits seed 42: train 124 (86 low / 38 high), val 16 (11/5), test 31 (22/9).
+    Also written: `splits_seed43.json`, `splits_seed44.json`, `cv_folds.json` (5-fold, 34–35 val each).
+- **Train-only class balancing (plan §3.3).** `dataset.py` subsamples train crops:
+  24,200 → **15,936 (7,968/class)**; val (3,101) and test (6,348) keep true prevalence.
+  Dataset self-test passed.
+- **M2 gate re-run, patient level, n=171 (MD-2).** Pooled AUROC **LR 0.626 (95% CI 0.533–0.705),
+  RF 0.636 (0.548–0.720)**; RF accuracy 0.702 vs majority baseline 0.696.
+  Patient-aggregated variant (features averaged per patient before training) **LR 0.599 /
+  RF 0.597** — so per-slice noise is not the cause; radiomics is genuinely weak here.
+  Verdict: **weak-signal pass with caveats** (CIs exclude 0.5, but far below the paper's
+  dominant-radiomics claim). Report regenerated: `docs/radiomics_gate_report.md`.
+- **M3 timing re-measured** on the balanced 15,936-crop train set: epoch 1 **34.6 s** (warm
+  cache), steady state **14.2 s/epoch** → 200 epochs ≈ **47 min** (plan §6 "≲1 h" met).
+
 ### M3 speed measurement (single full epoch, RTX 3050, AMP, num_workers=2)
 
 | Measurement | Value |

@@ -1,28 +1,36 @@
 """
-Step 5: Exclusion Criteria + Stratified Dataset Split
-=======================================================
-Implements the paper's Fig. 2 exclusion/split pipeline:
+Step 5: Exclusion criteria + patient-level stratified splits (plan §3.2–§3.3)
+=============================================================================
+Exclusion order, per plan §3.2:
 
-  1. Start with all patients that have a WHO/ISUP grade in kits.json
-  2. Exclude: missing any required clinical field  (≈0 after Step 4 synthesis)
-  3. Exclude: image count outside mean ± 1 SD of all patients  (plan §5.3)
-  4. Exclude: radiomics extraction failures (not in radiomics_all.csv)
-  5. Exclude: no 2D tumour slice with mask ≥ 256 px  (plan §5.4)
-  6. Within each class (low/high): random-select to equalise image counts
-     across classes  (plan §5.5)
-  7. Stratified random split → train / val / test  (target: ~111/15/30)
+  1. Missing any required clinical field      (real kits.json values, Step 4)
+  2. Missing WHO/ISUP grade                   (paper: 38 patients)
+  3. Image count outside mean ± 1 SD          (paper: 15 patients)
+  4. Radiomics extraction failure
+  5. No tumour slice with mask >= 256 px
 
-Reads:
-  kits19/data/kits.json
-  data/processed/radiomics_all.csv
-  data/interim/<patient_id>/      (to count valid slices)
+Image count decision (plan §3.5-style, declared in LOG.md 2026-10-24): the paper
+does not say what an "image" is. Counting tumour-containing slices excludes 46
+patients and counting CT-series slices excludes 1, where the paper excludes 15;
+no reading reproduces 15. We use the **CT-series** slice count (`imaging.nii.gz`
+z size), the literal reading of "images per patient", which keeps the cohort at
+~171 and inside the plan's 157–172 target. Tumour-slice counts are still written
+to the split record for transparency.
 
-Writes:
-  data/processed/splits.json  — {train: [...], val: [...], test: [...], seed: int,
-                                  excluded: {...}, counts: {...}}
+No class balancing happens here (plan §3.3): balancing is done by subsampling
+images **inside the training split only** (src/data/dataset.py). Validation and
+test keep the true patient prevalence.
+
+Outputs (data/processed/):
+  splits.json              — paper-style split, seed 42 (the dataset default)
+  splits_seed43.json       — extra seeds for variance
+  splits_seed44.json
+  cv_folds.json            — 5-fold patient-level stratified CV over the cohort
+  ct_slice_counts.json     — CT-series slice count per case (cached)
+  tumor_slice_counts_ge256.json — tumour slices >= 256 px per case (cached)
 
 Usage:
-  python src/data/dataset_split.py [--seed 42] [--val-frac 0.09] [--test-frac 0.18]
+  python src/data/dataset_split.py [--seeds 42 43 44] [--val-frac 0.09] [--test-frac 0.18]
 """
 
 import os
@@ -32,298 +40,239 @@ import logging
 import glob
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, StratifiedKFold
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger(__name__)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 MIN_MASK_PIXELS = 256
+CLINICAL_FIELDS = ["age", "sex", "bmi", "pvd", "dm", "ckd", "smoking", "alcohol"]
 
 
 def get_paths():
     return {
-        "kits_json":       os.path.join(REPO_ROOT, "kits19", "data", "kits.json"),
-        "interim":         os.path.join(REPO_ROOT, "data", "interim"),
-        "radiomics_all":   os.path.join(REPO_ROOT, "data", "processed", "radiomics_all.csv"),
-        "processed":       os.path.join(REPO_ROOT, "data", "processed"),
+        "kits_json":     os.path.join(REPO_ROOT, "kits19", "data", "kits.json"),
+        "data_dir":      os.path.join(REPO_ROOT, "kits19", "data"),
+        "interim":       os.path.join(REPO_ROOT, "data", "interim"),
+        "clinical":      os.path.join(REPO_ROOT, "data", "processed", "clinical.csv"),
+        "radiomics_all": os.path.join(REPO_ROOT, "data", "processed", "radiomics_all.csv"),
+        "processed":     os.path.join(REPO_ROOT, "data", "processed"),
     }
 
 
 def isup_to_binary(grade):
     try:
         g = int(grade)
-        return 0 if g <= 2 else 1
     except (TypeError, ValueError):
         return None
+    if g <= 0:
+        return None
+    return 0 if g <= 2 else 1
 
 
 def load_kits_json(path):
     with open(path) as f:
-        records = json.load(f)
-    return {(r.get("case_id") or r.get("patient_id")): r for r in records}
+        return {(r.get("case_id") or r.get("patient_id")): r for r in json.load(f)}
 
 
-def count_valid_slices(patient_id, interim_dir):
-    """Count how many saved patches exist for a patient (each == 1 valid tumour slice)."""
-    pat_dir = os.path.join(interim_dir, patient_id)
-    return len(glob.glob(os.path.join(pat_dir, "slice_*.npy")))
+def ct_slice_counts(case_ids, data_dir, cache_path):
+    """Number of images in each patient's CT series, from the NIfTI header."""
+    if os.path.exists(cache_path):
+        with open(cache_path) as f:
+            counts = json.load(f)
+        log.info("Loaded CT slice counts from %s", cache_path)
+    else:
+        import SimpleITK as sitk
+        counts = {}
+        for cid in case_ids:
+            img = os.path.join(data_dir, cid, "imaging.nii.gz")
+            if not os.path.isfile(img):
+                continue
+            reader = sitk.ImageFileReader()
+            reader.SetFileName(img)
+            reader.ReadImageInformation()
+            size = reader.GetSize()
+            counts[cid] = int(size[2]) if len(size) >= 3 else int(size[-1])
+        with open(cache_path, "w") as f:
+            json.dump(counts, f, indent=2)
+        log.info("Counted CT-series slices for %d cases -> %s", len(counts), cache_path)
+    return counts
 
 
-def apply_exclusions(kits_meta, radiomics_df, interim_dir):
-    """
-    Returns (kept_df, exclusion_log) where kept_df has columns:
-      patient_id, label, n_slices
-    """
+def tumor_slice_counts(case_ids, data_dir, cache_path):
+    """Tumour slices with mask >= MIN_MASK_PIXELS, from the segmentation."""
+    if os.path.exists(cache_path):
+        with open(cache_path) as f:
+            counts = json.load(f)
+        log.info("Loaded tumour slice counts from %s", cache_path)
+    else:
+        import SimpleITK as sitk
+        counts = {}
+        for cid in case_ids:
+            seg = os.path.join(data_dir, cid, "segmentation.nii.gz")
+            if not os.path.isfile(seg):
+                counts[cid] = 0
+                continue
+            arr = sitk.GetArrayFromImage(sitk.ReadImage(seg))
+            per_slice = (arr > 0).sum(axis=(1, 2))
+            counts[cid] = int((per_slice >= MIN_MASK_PIXELS).sum())
+        with open(cache_path, "w") as f:
+            json.dump(counts, f, indent=2)
+        log.info("Counted tumour slices (>= %d px) for %d cases -> %s",
+                 MIN_MASK_PIXELS, len(counts), cache_path)
+    return counts
+
+
+def apply_exclusions(kits_meta, clinical_df, radiomics_df, ct_counts, tumor_counts):
+    """Return (kept_df, exclusion_log). kept_df: patient_id, label, n_ct, n_tumor."""
     exclusion_log = {
+        "missing_clinical":    [],
         "no_isup_grade":       [],
+        "image_count_outlier": [],
         "radiomics_failure":   [],
         "no_valid_slices":     [],
-        "slice_count_outlier": [],
     }
 
-    # ── Step 1: start with patients that have a label ─────────────────────────
-    labeled_patients = []
+    clinical_ok = set(
+        clinical_df.dropna(subset=CLINICAL_FIELDS)["patient_id"]
+    ) if clinical_df is not None else set(kits_meta)
+
+    # 1+2: clinical fields and grade present
+    kept = []
     for pid, meta in kits_meta.items():
-        isup_raw = meta.get("tumor_isup_grade") or meta.get("isup_grade")
-        label = isup_to_binary(isup_raw)
+        if pid not in clinical_ok:
+            exclusion_log["missing_clinical"].append(pid)
+            continue
+        label = isup_to_binary(meta.get("tumor_isup_grade") or meta.get("isup_grade"))
         if label is None:
             exclusion_log["no_isup_grade"].append(pid)
             continue
-        labeled_patients.append({"patient_id": pid, "label": label})
+        kept.append({"patient_id": pid, "label": label,
+                     "n_ct": ct_counts.get(pid, 0), "n_tumor": tumor_counts.get(pid, 0)})
+    df = pd.DataFrame(kept)
+    log.info("After clinical + grade filter: %d patients (low %d / high %d)",
+             len(df), int((df["label"] == 0).sum()), int((df["label"] == 1).sum()))
 
-    df = pd.DataFrame(labeled_patients)
-    log.info("Patients with ISUP grade: %d", len(df))
+    # 3: image count beyond mean ± 1 SD (CT-series images, see module docstring)
+    mu, sd = df["n_ct"].mean(), df["n_ct"].std()
+    lo, hi = mu - sd, mu + sd
+    outliers = df[(df["n_ct"] < lo) | (df["n_ct"] > hi)]["patient_id"].tolist()
+    exclusion_log["image_count_outlier"].extend(outliers)
+    df = df[(df["n_ct"] >= lo) & (df["n_ct"] <= hi)].reset_index(drop=True)
+    log.info("After image-count filter (CT slices %.1f ± %.1f = [%.1f, %.1f]): %d patients",
+             mu, sd, lo, hi, len(df))
 
-    # ── Step 2: radiomics extraction must have succeeded ──────────────────────
+    # 4: radiomics extraction succeeded
     if radiomics_df is not None and not radiomics_df.empty:
-        patients_with_radiomics = set(radiomics_df["patient_id"].unique())
-        failed = df[~df["patient_id"].isin(patients_with_radiomics)]["patient_id"].tolist()
+        have = set(radiomics_df["patient_id"].unique())
+        failed = df[~df["patient_id"].isin(have)]["patient_id"].tolist()
         exclusion_log["radiomics_failure"].extend(failed)
-        df = df[df["patient_id"].isin(patients_with_radiomics)].reset_index(drop=True)
-        log.info("After radiomics filter: %d", len(df))
+        df = df[df["patient_id"].isin(have)].reset_index(drop=True)
+        log.info("After radiomics filter: %d patients", len(df))
     else:
-        log.warning("radiomics_all.csv not found or empty — skipping radiomics exclusion filter.")
+        log.warning("radiomics_all.csv missing — skipping radiomics exclusion filter.")
 
-    # ── Step 3: count valid tumour slices ─────────────────────────────────────
-    df["n_slices"] = df["patient_id"].apply(lambda pid: count_valid_slices(pid, interim_dir))
-    no_slices = df[df["n_slices"] == 0]["patient_id"].tolist()
+    # 5: at least one tumour slice with mask >= 256 px
+    no_slices = df[df["n_tumor"] == 0]["patient_id"].tolist()
     exclusion_log["no_valid_slices"].extend(no_slices)
-    df = df[df["n_slices"] > 0].reset_index(drop=True)
-    log.info("After no-valid-slice filter: %d", len(df))
-
-    # ── Step 4: image count outlier exclusion (mean ± 1 SD) ──────────────────
-    if len(df) > 2:
-        mu = df["n_slices"].mean()
-        sd = df["n_slices"].std()
-        lo, hi = mu - sd, mu + sd
-        outliers = df[(df["n_slices"] < lo) | (df["n_slices"] > hi)]["patient_id"].tolist()
-        exclusion_log["slice_count_outlier"].extend(outliers)
-        df = df[(df["n_slices"] >= lo) & (df["n_slices"] <= hi)].reset_index(drop=True)
-        log.info(
-            "After slice-count outlier filter (%.1f ± %.1f = [%.1f, %.1f]): %d",
-            mu, sd, lo, hi, len(df),
-        )
-    else:
-        log.warning("Too few patients for outlier filtering — skipping.")
-
+    df = df[df["n_tumor"] > 0].reset_index(drop=True)
+    log.info("After tumour-slice filter: %d patients", len(df))
     return df, exclusion_log
 
 
-def equalise_class_image_counts(df, rng):
-    """
-    Plan §5.5: random-select patients within each class so total image counts
-    are approximately equal between low and high. We down-sample the class
-    with more total slices by removing patients (whole patient, not slices).
-    """
-    low  = df[df["label"] == 0].copy()
-    high = df[df["label"] == 1].copy()
-
-    total_low  = low["n_slices"].sum()
-    total_high = high["n_slices"].sum()
-    log.info("Before equalisation: low=%d slices (%d pts), high=%d slices (%d pts)",
-             total_low, len(low), total_high, len(high))
-
-    # Down-sample the majority class by removing patients greedily
-    if total_low > total_high:
-        majority, minority = low, high
-    else:
-        majority, minority = high, low
-
-    # Shuffle majority and drop patients until sums are roughly equal
-    majority = majority.sample(frac=1, random_state=int(rng.integers(0, 2**31))).reset_index(drop=True)
-    target = minority["n_slices"].sum()
-    cumsum = 0
-    keep_idx = []
-    for i, row in majority.iterrows():
-        if cumsum + row["n_slices"] <= target * 1.1:   # allow 10% overshoot
-            keep_idx.append(i)
-            cumsum += row["n_slices"]
-    majority = majority.loc[keep_idx].reset_index(drop=True)
-
-    df_eq = pd.concat([minority, majority]).reset_index(drop=True)
-    log.info("After equalisation: low=%d pts, high=%d pts (total=%d)",
-             (df_eq["label"]==0).sum(), (df_eq["label"]==1).sum(), len(df_eq))
-    return df_eq
-
-
 def stratified_split(df, val_frac, test_frac, seed):
-    """
-    Stratified split by binary label.
-    Returns dict: {train: [ids], val: [ids], test: [ids]}
-    """
-    patients = df["patient_id"].tolist()
-    labels   = df["label"].tolist()
-
-    # First carve out test set
+    """Patient-level stratified split; returns sorted id lists."""
+    patients, labels = df["patient_id"].tolist(), df["label"].tolist()
     p_trainval, p_test, l_trainval, _ = train_test_split(
-        patients, labels,
-        test_size=test_frac,
-        stratify=labels,
-        random_state=seed,
-    )
-
-    # Then val from trainval
-    val_frac_adjusted = val_frac / (1 - test_frac)
+        patients, labels, test_size=test_frac, stratify=labels, random_state=seed)
     p_train, p_val, _, _ = train_test_split(
         p_trainval, l_trainval,
-        test_size=val_frac_adjusted,
-        stratify=l_trainval,
-        random_state=seed,
-    )
+        test_size=val_frac / (1 - test_frac),
+        stratify=l_trainval, random_state=seed)
+    return {"train": sorted(p_train), "val": sorted(p_val), "test": sorted(p_test)}
 
+
+def build_split_record(df, splits, seed, exclusion_log, ct_mu, ct_sd):
+    label_map = dict(zip(df["patient_id"], df["label"]))
+    n_ct_map = dict(zip(df["patient_id"], df["n_ct"]))
+    n_tumor_map = dict(zip(df["patient_id"], df["n_tumor"]))
     return {
-        "train": sorted(p_train),
-        "val":   sorted(p_val),
-        "test":  sorted(p_test),
+        "seed": seed,
+        "train": splits["train"], "val": splits["val"], "test": splits["test"],
+        "counts": {k: len(splits[k]) for k in ("train", "val", "test")},
+        "counts_total": len(df),
+        "label_distribution": {
+            name: {"low": sum(1 for p in ids if label_map.get(p) == 0),
+                   "high": sum(1 for p in ids if label_map.get(p) == 1)}
+            for name, ids in [("train", splits["train"]), ("val", splits["val"]),
+                              ("test", splits["test"])]
+        },
+        "image_count_rule": {
+            "metric": "CT-series slice count",
+            "mean": float(ct_mu), "std": float(ct_sd),
+            "note": ("tumour-slice counts exclude 46 patients where the paper excludes 15; "
+                     "CT-series counts are the literal reading of images per patient"),
+        },
+        "tumor_slice_counts": {p: n_tumor_map[p] for p in df["patient_id"]},
+        "excluded": {k: len(v) for k, v in exclusion_log.items()},
+        "excluded_ids": exclusion_log,
     }
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Step 5: Exclusions + stratified split")
-    parser.add_argument("--seed",      type=int,   default=42,   help="Random seed (versioned)")
-    parser.add_argument("--val-frac",  type=float, default=0.09, help="Val fraction of full set (default 0.09 ≈ 15/172)")
-    parser.add_argument("--test-frac", type=float, default=0.18, help="Test fraction of full set (default 0.18 ≈ 30/172)")
+    parser = argparse.ArgumentParser(description="Step 5: exclusions + stratified splits")
+    parser.add_argument("--seeds", type=int, nargs="+", default=[42, 43, 44])
+    parser.add_argument("--val-frac", type=float, default=0.09, help="≈15/172")
+    parser.add_argument("--test-frac", type=float, default=0.18, help="≈30/172")
     args = parser.parse_args()
-
     paths = get_paths()
-    rng   = np.random.default_rng(seed=args.seed)
-
-    # Load data
-    if not os.path.exists(paths["kits_json"]):
-        log.error("kits.json not found — run generate_fake_data.py or provide real dataset.")
-        return
 
     kits_meta = load_kits_json(paths["kits_json"])
-    log.info("Loaded %d records from kits.json", len(kits_meta))
+    clinical_df = (pd.read_csv(paths["clinical"])
+                   if os.path.exists(paths["clinical"]) else None)
+    radiomics_df = (pd.read_csv(paths["radiomics_all"], usecols=["patient_id"])
+                    if os.path.exists(paths["radiomics_all"]) else None)
 
-    radiomics_df = None
-    if os.path.exists(paths["radiomics_all"]):
-        radiomics_df = pd.read_csv(paths["radiomics_all"])
+    ct_counts = ct_slice_counts(sorted(kits_meta), paths["data_dir"],
+                                os.path.join(paths["processed"], "ct_slice_counts.json"))
+    tumor_counts = tumor_slice_counts(sorted(kits_meta), paths["data_dir"],
+                                      os.path.join(paths["processed"],
+                                                   "tumor_slice_counts_ge256.json"))
 
-    # Apply exclusions
-    df, exclusion_log = apply_exclusions(kits_meta, radiomics_df, paths["interim"])
+    df, exclusion_log = apply_exclusions(
+        kits_meta, clinical_df, radiomics_df, ct_counts, tumor_counts)
+    log.info("Final cohort: %d patients (low %d / high %d)",
+             len(df), int((df["label"] == 0).sum()), int((df["label"] == 1).sum()))
 
-    if len(df) < 3:
-        log.warning(
-            "Only %d patients remain after exclusions. "
-            "Stratified split requires at least 3. Saving what we have.", len(df)
-        )
-        splits = {"train": df["patient_id"].tolist(), "val": [], "test": []}
-    else:
-        # Equalise class image counts (plan §5.5)
-        # NOTE: Per updated plan, do NOT equalise class image counts before splitting. Class balancing will be applied later in training.
+    ct_mu, ct_sd = df["n_ct"].mean(), df["n_ct"].std()
 
-        # Stratified split
-        splits = stratified_split(df, args.val_frac, args.test_frac, args.seed)
+    # Paper-style split, one file per seed; seed 42 is the dataset default.
+    for seed in args.seeds:
+        record = build_split_record(
+            df, stratified_split(df, args.val_frac, args.test_frac, seed),
+            seed, exclusion_log, ct_mu, ct_sd)
+        name = "splits.json" if seed == args.seeds[0] else f"splits_seed{seed}.json"
+        path = os.path.join(paths["processed"], name)
+        with open(path, "w") as f:
+            json.dump(record, f, indent=2)
+        log.info("seed %d -> %s : train %d / val %d / test %d (low/high %s)",
+                 seed, name, record["counts"]["train"], record["counts"]["val"],
+                 record["counts"]["test"], record["label_distribution"])
 
-    # Compile output
-    label_map = dict(zip(df["patient_id"], df["label"]))
-    output = {
-        "seed":     args.seed,
-        "train":    splits["train"],
-        "val":      splits["val"],
-        "test":     splits["test"],
-        "counts": {
-            "train": len(splits["train"]),
-            "val":   len(splits["val"]),
-            "test":  len(splits["test"]),
-            "total": len(splits["train"]) + len(splits["val"]) + len(splits["test"]),
-        },
-        "label_distribution": {
-            split: {
-                "low":  sum(1 for p in ids if label_map.get(p) == 0),
-                "high": sum(1 for p in ids if label_map.get(p) == 1),
-            }
-            for split, ids in [("train", splits["train"]), ("val", splits["val"]), ("test", splits["test"])]
-        },
-        "excluded": {k: len(v) for k, v in exclusion_log.items()},
-        "excluded_ids": exclusion_log,
+    # 5-fold patient-level stratified CV over the whole cohort
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=args.seeds[0])
+    ids, labels = df["patient_id"].tolist(), df["label"].tolist()
+    cv_folds = {
+        f"fold_{i}": {"train": [ids[a] for a in tr], "val": [ids[b] for b in va]}
+        for i, (tr, va) in enumerate(skf.split(ids, labels))
     }
-
-    # Write splits.json
-    out_path = os.path.join(paths["processed"], "splits.json")
-    with open(out_path, "w") as f:
-        json.dump(output, f, indent=2)
-    log.info("Saved splits.json → %s", out_path)
-    log.info(
-        "Split counts: train=%d, val=%d, test=%d",
-        output["counts"]["train"], output["counts"]["val"], output["counts"]["test"],
-    )
-    log.info("Exclusion summary: %s", output["excluded"])
-    log.info("Step 5 complete.")
-
-    # ------------------------------------------------------------------
-    # Generate 5‑fold patient‑level stratified CV folds (M1 requirement)
-    # ------------------------------------------------------------------
-    from sklearn.model_selection import StratifiedKFold
-    cv_folds = {}
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=args.seed)
-    patient_ids = df["patient_id"].tolist()
-    patient_labels = df["label"].tolist()
-    for fold_idx, (train_idx, val_idx) in enumerate(skf.split(patient_ids, patient_labels)):
-        cv_folds[f"fold_{fold_idx}"] = {
-            "train": [patient_ids[i] for i in train_idx],
-            "val":   [patient_ids[i] for i in val_idx],
-        }
     cv_path = os.path.join(paths["processed"], "cv_folds.json")
     with open(cv_path, "w") as f:
         json.dump(cv_folds, f, indent=2)
-    log.info("Saved cv_folds.json → %s", cv_path)
-
-    label_map = dict(zip(df["patient_id"], df["label"]))
-    output = {
-        "seed":     args.seed,
-        "train":    splits["train"],
-        "val":      splits["val"],
-        "test":     splits["test"],
-        "counts": {
-            "train": len(splits["train"]),
-            "val":   len(splits["val"]),
-            "test":  len(splits["test"]),
-            "total": len(splits["train"]) + len(splits["val"]) + len(splits["test"]),
-        },
-        "label_distribution": {
-            split: {
-                "low":  sum(1 for p in ids if label_map.get(p) == 0),
-                "high": sum(1 for p in ids if label_map.get(p) == 1),
-            }
-            for split, ids in [("train", splits["train"]), ("val", splits["val"]), ("test", splits["test"])]
-        },
-        "excluded": {k: len(v) for k, v in exclusion_log.items()},
-        "excluded_ids": exclusion_log,
-    }
-
-    out_path = os.path.join(paths["processed"], "splits.json")
-    with open(out_path, "w") as f:
-        json.dump(output, f, indent=2)
-    log.info("Saved splits.json → %s", out_path)
-    log.info(
-        "Split counts: train=%d, val=%d, test=%d",
-        output["counts"]["train"], output["counts"]["val"], output["counts"]["test"],
-    )
-    log.info("Exclusion summary: %s", output["excluded"])
-    log.info("Step 5 complete.")
+    log.info("Saved 5-fold CV -> %s (fold val sizes: %s)",
+             cv_path, [len(v["val"]) for v in cv_folds.values()])
+    log.info("Exclusion summary: %s", exclusion_log)
 
 
 if __name__ == "__main__":

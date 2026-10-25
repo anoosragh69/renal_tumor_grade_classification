@@ -42,7 +42,7 @@ Status legend: `[x]` done · `[~]` in progress / partial · `[ ]` pending · `[S
 - [x] Decide and document radiomics level: per-slice 2D crop (chosen)
 - [x] Re-run top-16 F-value selection **train-only, inside each fold/seed** after the new cohort/splits exist
 - [x] Reconcile top-16 artifact with the dataset (2026-10-24) — `top16_features.json` had become a per-fold dict and crashed `dataset.py`; now `top16_selection.py` writes the frozen paper-split list to `top16_features.json`, per-fold lists to `top16_features_folds.json`, and regenerates `radiomics_top16.csv` to match. Loader verified: train 91 / val 12 / test 23 patients, 17,774 / 2,354 / 4,409 slices
-- [ ] **Checkpoint:** cohort and split counts logged; no patient/slice leakage; `splits.json` + `cv_folds.json` committed — **open: cohort is 126, not ~157; see Discrepancies below**
+- [x] **Checkpoint:** cohort and split counts logged; no patient/slice leakage; `splits.json` + `cv_folds.json` committed — **2026-10-24:** cohort **171** patients (119 low / 52 high); splits seed 42 train 124 (86/38) / val 16 (11/5) / test 31 (22/9); train balanced 24,200 → 15,936 crops (7,968/class); val/test left unbalanced; CV folds 34–35 val each. Deviation declared: image-count rule uses CT-series slices (see MD-1)
 
 ---
 
@@ -53,7 +53,7 @@ Run this before any neural training.
 - [x] Logistic regression and random forest on the 16 radiomic features
 - [x] 5-fold patient-level CV; top-16 selection fit **inside each fold**
 - [x] Report patient-level AUROC mean ± SD and pooled out-of-fold AUROC (rerun 2026-10-24)
-- [x] **Gate decision: FAIL.** Pooled patient-level AUROC **LR 0.534 / RF 0.580** (n=126); per-fold LR mean 0.530 ± 0.075, RF mean 0.600 ± 0.026. Accuracy is meaningless here: RF 0.762 vs **majority-class baseline 0.754** (95 low / 31 high). Both models sit in the plan's near-chance band, while the paper reports the radiomic sector as dominant — **audit before training M4**.
+- [x] **Gate decision (rerun 2026-10-24 on the 171 cohort): WEAK-SIGNAL PASS with caveats.** Pooled patient-level AUROC **LR 0.626 (95% CI 0.533–0.705) / RF 0.636 (0.548–0.720)**, n=171. CIs exclude 0.5, so signal is real but weak; RF accuracy 0.702 vs **majority-class baseline 0.696** (119 low / 52 high) is at baseline. Patient-aggregated variant (features averaged per patient before training) LR 0.599 / RF 0.597 — aggregation does **not** recover the paper's dominant-radiomics claim, so the weakness is genuine, not per-slice noise. Supersedes the 126-cohort result (LR 0.534 / RF 0.580). Audit performed; proceed to M4 with the caveat recorded.
 - [x] **Checkpoint:** gate results written to `results/metrics/radiomics_gate_*.json` and `docs/radiomics_gate_report.md`
 - [x] Re-run at **patient level** (mean slice probability per patient) — done 2026-10-24, superseding the per-slice scoring
 
@@ -61,8 +61,8 @@ Run this before any neural training.
 
 ## Discrepancies found 2026-10-24 (audit before M3/M4)
 
-- [ ] **Cohort is 126, not ~157.** `splits.json` keeps 91/12/23 (126 total) because `slice_count_outlier` excludes **46** patients; the paper excludes **15**. Root cause: our "image count" is the number of *tumor-containing* slices (mean 198.0, SD 34.9 over 210 patients), a very wide distribution that mean±1 SD guts. The paper almost certainly counted CT-series slices, not tumor slices. Decide: relax/replace the outlier rule, or declare 126 as our cohort in §9.
-- [ ] **M2 gate near chance (LR 0.534 / RF 0.580 patient-level, n=126).** Plan §M2 says to audit labels, radiomics extraction and leakage before M4. Candidates: per-slice radiomics are noisy for a per-patient task; class imbalance (95 low / 31 high in cohort); per-tumor (3D) aggregation instead of per-slice; LR/RF may be the wrong read and the paper's own radiomics lead could depend on its 157-patient cohort.
+- [x] **MD-1 Cohort was 126, not ~157 — RESOLVED 2026-10-24.** `splits.json` used tumor-slice counts, excluding **46** patients; the paper excludes **15**. No reading reproduces 15: CT-series counts exclude **1** (only `case_00160`), tumor-slice counts 46, log-space 46, robust 4. **Decision (declared deviation):** use **CT-series** slice counts (literal "images per patient"), giving a **171**-patient cohort inside the plan's 157–172 target. No equalisation. See `LOG.md` 2026-10-24.
+- [x] **MD-2 M2 gate near chance — RESOLVED (audited) 2026-10-24.** Re-run at patient level on the 171 cohort: LR 0.626 / RF 0.636, CIs exclude 0.5 (weak but real signal, still far below the paper's radiomics dominance). Patient-aggregated variant ~0.60 rules out per-slice noise as the cause. Labels, extraction and leakage audited clean (patient-level splits disjoint; radiomics recomputed). Proceeding to M4 with the caveat that radiomics alone is weak in this cohort.
 - [ ] **Baseline runs look incomplete.** `baseline_*_test_metrics.json` all report `checkpoint_epoch: 2` and `n_slices: 320` — these are not the 200-epoch early-stopped runs the checklist describes.
 - [ ] **vViT attention still does not match the paper.** `src/models/vvit.py` uses `nn.TransformerEncoder` with 8 heads / dim 128 → head_dim 16; the plan (§M4) requires inner dim 512 (8×64) projected back to 128 via a custom block. Not yet done.
 
@@ -76,9 +76,9 @@ Target: full vViT run in under ~1 h; a 37 h run means a bug.
 - [x] Cache preprocessed crops as `.npy` — `data/processed/crops_cache/`, wired into `dataset.py`
 - [x] Time a DataLoader-only pass; time one forward/backward on one batch — **2026-10-24:** steady-state epoch **35.7 s** (16 s load + 18 s fwd/bwd at 32 ms/batch + 1.4 s val); cold cache 167.3 s one-time. See `LOG.md`
 - [x] Tune `num_workers` (Windows) — `num_workers=2` + `persistent_workers=True`: 1,169 slices/s vs 417 slices/s at `num_workers=0`
-- [ ] Confirm each epoch uses the balanced training crops, not all tumor slices (**open:** loader still yields all 17,774 train crops; plan expects a subsampled balanced ~1.4k — decide with the cohort question)
+- [x] Confirm each epoch uses the balanced training crops, not all tumor slices — 2026-10-24: train loader subsamples to **15,936 crops (7,968/class)** from 24,200; val/test unbalanced
 - [x] Confirm AMP is enabled and tensors are on GPU — run reports `device: cuda`, `| amp`
-- [x] **Checkpoint:** measured epoch time + projected full-run time recorded in `LOG.md` — steady-state **32.8 s/epoch** → 200 epochs ≈ 1.8 h, early stopping expected far sooner (plan §6 "≲1 h" target reachable)
+- [x] **Checkpoint:** measured epoch time + projected full-run time recorded in `LOG.md` — 2026-10-24 on the balanced 15,936-crop train set: epoch 1 **34.6 s** (warm), steady state **14.2 s/epoch** → 200 epochs ≈ **47 min**; earlier 32.8–35.2 s figures were on the 24,200-crop unbalanced set. Plan §6 "≲1 h" target met
 
 ---
 
