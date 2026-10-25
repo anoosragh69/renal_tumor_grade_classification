@@ -17,6 +17,12 @@ Plan: `tasks/plan.md`. Checklist: `tasks/todo.md`. Only dated, factual notes liv
 - None of the paired comparisons is statistically significant. With 31 patients, this is inconclusive rather than evidence of equivalence; p-values are exploratory and unadjusted across comparisons. Slice-level DeLong was omitted because slices within patients are correlated. See `docs/vvit_baseline_comparison_2026-10-25.md`.
 - Results: `results/metrics/vvit_baseline_comparisons_seed42.{json,csv}` (generated and git-ignored).
 
+## 2026-10-25 — held-out patient demo and final report
+
+- Added `src/training/demo.py` to select a held-out patient from the checkpoint's test split, apply saved train-only preprocessing, and print each head's per-slice vote, final slice vote, mean head probability, and aggregated patient prediction/probability. It consumes preprocessed image crops, radiomics, and clinical artifacts already derived from CT, masks, and `kits.json`; raw CT alone is insufficient. Manual run completed on `case_00002` (166 slices).
+- Replaced the placeholder README with a concise pipeline diagram, run commands, scope, and results pointers. Added `docs/final_report_2026-10-25.md` covering methods, cohort, all model results, permutation analysis, paired comparisons, deviations, and limitations.
+- Marked M7 and M8 complete in `tasks/todo.md`; no further training or accuracy-tuning work is planned.
+
 ---
 
 ## 2026-10-25

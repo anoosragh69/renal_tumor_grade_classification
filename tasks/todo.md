@@ -127,16 +127,16 @@ Only if time allows; not required for the core result.
 
 ## M7: Demo
 
-- [ ] `demo.py` on a test-split case: load CT + mask + `kits.json`, crop slices, compute radiomics with the frozen top-16 list and train z-score stats, build clinical vector, run vViT
-- [ ] Print per-sector votes, final vote, and P(high grade) per slice and per patient
-- [ ] State the input requirement (image crop + mask + clinical record; raw CT alone is insufficient) and present as research illustration, not diagnostic
+- [x] Add `src/training/demo.py` for a held-out test patient, using the pipeline's processed crops/radiomics/clinical table and checkpoint's frozen feature/scaler metadata
+- [x] Print per-head votes, final vote, and P(high grade) per slice and per patient
+- [x] State the input requirement (processed image crop, mask-derived radiomics, and clinical record; raw CT alone is insufficient) and label the output a research illustration, not diagnostic
 
 ---
 
 ## M8: Report
 
-- [ ] Draft: Intro → Methods → Results → Discussion → Limitations
-- [ ] Declare every deviation from the paper (plan §9), including:
+- [x] Draft: Intro → Methods → Results → Discussion → Limitations (`docs/final_report_2026-10-25.md`)
+- [x] Declare every deviation from the paper (plan §9), including:
   - Python/PyTorch versions vs 3.8/1.7.1
   - cohort/split counts vs 157 → 111/15/30
   - DM definition and alcohol-level mapping
@@ -147,8 +147,8 @@ Only if time allows; not required for the core result.
   - patient-level CV in addition to the single split
   - baseline pretraining status and lr
   - GitHub KiTS19 mirror vs TCIA C4KC-KiTS
-- [ ] One-page README with the pipeline diagram from plan §2
-- [ ] **Checkpoint:** final writeup complete
+- [x] One-page README with the pipeline diagram from plan §2
+- [x] **Checkpoint:** final writeup complete
 
 ---
 
@@ -165,7 +165,7 @@ Only if time allows; not required for the core result.
 
 ## Notes
 
-- **Artifact status (2026-10-25):** paper seeds 42–44 and all five nested CV training/evaluation runs are complete; results are summarized in `docs/vvit_results_2026-10-25.md`. Seed/fold checkpoints, predictions, and scaler metadata are in ignored `results/`. The earlier two-epoch vViT probe predates radiomic scaling and is not a final result. Permutation importance and final report remain. Baseline metrics and predictions are present under `results/metrics/`.
+- **Artifact status (2026-10-25):** paper seeds 42–44, all five nested CV runs, sector permutation importance, paired baseline comparisons, and the held-out patient demo are complete. Main results are in `docs/final_report_2026-10-25.md`; seed/fold checkpoints, predictions, and scaler metadata are in ignored `results/`. The earlier two-epoch vViT probe predates radiomic scaling and is not a final result.
 - **Dataset:** real `kits19/data/` present (210 cases with segmentation + `kits.json`; cases 00210–00299 imaging-only).
 - **Radiomics env:** pyradiomics 3.1.0 in Miniconda env `radiomics` (`%USERPROFILE%\miniconda3\envs\radiomics\python.exe`; Python 3.9, numpy 1.26.4). Full run: that python + `src/data/radiomics_extraction.py --splits data/processed/splits.json --workers 7` (~50 min; resume checkpoints in `data/processed/radiomics_parts/`). `normalize=True` + binWidth=25 gives ~0.4 s/slice.
 - **Training env:** torch 2.14.0+cu126, torchvision 0.29.0+cu126; `torch.cuda.is_available()=True` on RTX 3050 Laptop 6GB.
